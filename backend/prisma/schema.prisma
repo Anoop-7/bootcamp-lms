@@ -1,0 +1,247 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  STUDENT
+  INSTRUCTOR
+  ADMIN
+}
+
+enum CohortStatus {
+  UPCOMING_LIVE
+  ONGOING_LIVE
+  COMPLETED_LIVE
+  SELF_PACED
+}
+
+enum DeliveryType {
+  LIVE
+  RECORDED
+  HYBRID
+}
+
+enum ContentType {
+  RECORDING
+  OFFLINE_VIDEO
+  SLIDES
+  DOCUMENT
+}
+
+enum VideoStatus {
+  UPLOADING
+  INSPECTING
+  QUEUED
+  ENCODING
+  PUBLISHING
+  READY
+  FAILED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+model User {
+  id              String         @id @default(uuid())
+  email           String         @unique
+  password        String?
+  name            String
+  role            Role           @default(STUDENT)
+  avatar          String?
+  activeSessionToken String?        // Tracks active single-device playback session
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  cohortsTeaching Cohort[]       @relation("InstructorCohorts")
+  enrollments     Enrollment[]
+  orders          Order[]
+  watchProgress   WatchProgress[]
+  liveAttendances LiveAttendance[]
+  sentInvites     InstructorInvite[] @relation("AdminInvites")
+
+  @@map("users")
+}
+
+model PasswordReset {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  otpHash   String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("password_resets")
+}
+
+model InstructorInvite {
+  id          String       @id @default(uuid())
+  email       String       @unique
+  token       String       @unique
+  role        Role         @default(INSTRUCTOR)
+  status      InviteStatus @default(PENDING)
+  expiresAt   DateTime
+  invitedById String
+  invitedBy   User         @relation("AdminInvites", fields: [invitedById], references: [id])
+  acceptedAt  DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @default(now()) @updatedAt
+
+  @@index([token])
+}
+
+model Cohort {
+  id              String         @id @default(uuid())
+  title           String
+  slug            String         @unique
+  description     String
+  thumbnail       String?
+  price           Float          @default(0.0)
+  originalPrice   Float?         // Strike-through price (e.g., 4999)
+  validity        String?        // e.g. "3 years from date of purchase"
+  deliveryType    DeliveryType   @default(LIVE)
+  status          CohortStatus   @default(UPCOMING_LIVE)
+  startDate       DateTime?
+  endDate         DateTime?
+  discordUrl      String?
+
+  isLiveActive    Boolean        @default(false)
+  currentLiveUrl  String?
+
+  instructorId    String
+  instructor      User           @relation("InstructorCohorts", fields: [instructorId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  folders         Folder[]
+  enrollments     Enrollment[]
+  orders          Order[]
+  liveAttendances LiveAttendance[]
+
+  @@map("cohorts")
+}
+
+model Folder {
+  id        String    @id @default(uuid())
+  title     String
+  order     Int       @default(0)
+  cohortId  String
+  cohort    Cohort    @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  contents  Content[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("folders")
+}
+
+model VideoAsset {
+  id             String      @id @default(uuid())
+  originalKey    String      // S3 key for original multipart upload
+  hlsManifestKey String?     // S3 key for transcoded HLS .m3u8 master manifest
+  posterKey      String?     // S3 key for thumbnail poster image
+  durationSec    Int?        @default(0)
+  status         VideoStatus @default(UPLOADING)
+  errorMessage   String?
+  
+  contents       Content[]   // Decoupled relation: one video can be linked across multiple lectures
+
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@map("video_assets")
+}
+
+model Content {
+  id            String      @id @default(uuid())
+  title         String
+  type          ContentType
+  
+  // Decoupled Video Asset Relation (replaces raw videoUrl string)
+  videoAssetId  String?
+  videoAsset    VideoAsset? @relation(fields: [videoAssetId], references: [id], onDelete: SetNull)
+
+  resourceDoc   String?
+  durationSec   Int         @default(0)
+  order         Int         @default(0)
+
+  folderId      String
+  folder        Folder      @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  watchProgress WatchProgress[]
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("contents")
+}
+
+model Enrollment {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cohortId   String
+  cohort     Cohort   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  enrolledAt DateTime @default(now())
+
+  @@unique([userId, cohortId])
+  @@map("enrollments")
+}
+
+model Order {
+  id                String        @id @default(uuid())
+  userId            String
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cohortId          String
+  cohort            Cohort        @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  amount            Float
+  currency          String        @default("INR")
+  razorpayOrderId   String        @unique
+  razorpayPaymentId String?
+  status            PaymentStatus @default(PENDING)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@map("orders")
+}
+
+model WatchProgress {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contentId      String
+  content        Content   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  watchedSeconds Int       @default(0)
+  isCompleted    Boolean   @default(false)
+  completedAt    DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([userId, contentId])
+  @@map("watch_progress")
+}
+
+model LiveAttendance {
+  id       String   @id @default(uuid())
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cohortId String
+  cohort   Cohort   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  joinedAt DateTime @default(now())
+
+  @@map("live_attendances")
+}
