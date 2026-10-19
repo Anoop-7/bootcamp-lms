@@ -18,6 +18,7 @@ router.delete("/invites/:id", (req, res, next) => adminController.deleteInvite(r
 // Platform User & Role Governance
 router.get("/users", (req, res, next) => adminController.listUsers(req, res, next));
 router.patch("/users/:id/role", (req, res, next) => adminController.updateUserRole(req, res, next));
+router.delete("/users/:id", (req, res, next) => adminController.deleteUser(req, res, next));
 
 // Cohort & Enrollment Management
 router.get("/cohorts", (req, res, next) => adminController.listCohorts(req, res, next));

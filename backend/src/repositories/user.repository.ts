@@ -19,6 +19,8 @@ export class UserRepository {
         avatar: true,
         createdAt: true,
         updatedAt: true,
+        activeSessionToken: true,
+        tokenVersion: true,
       },
     });
   }

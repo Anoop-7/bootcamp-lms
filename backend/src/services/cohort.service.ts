@@ -16,7 +16,6 @@ function slugify(text: string): string {
     .replace(/-+$/, "");
 }
 
-// Student filtering helper
 function filterCurriculumForStudent(folders: any[]) {
   return folders.map((folder) => ({
     ...folder,
@@ -29,6 +28,26 @@ function filterCurriculumForStudent(folders: any[]) {
 }
 
 export class CohortService {
+  /**
+   * Helper: Ensures the user has permissions to modify the cohort (ADMIN or the owning INSTRUCTOR)
+   */
+  async assertCanManageCohort(cohortId: string, user: { userId: string; role: string }) {
+    const cohort = await prisma.cohort.findUnique({
+      where: { id: cohortId },
+      select: { id: true, instructorId: true },
+    });
+
+    if (!cohort) {
+      throw new Error("COHORT_NOT_FOUND");
+    }
+
+    if (user.role !== "ADMIN" && cohort.instructorId !== user.userId) {
+      throw new Error("FORBIDDEN_COHORT_MANAGE");
+    }
+
+    return cohort;
+  }
+
   async getPublicCohorts() {
     return cohortRepository.findAllPublic();
   }
@@ -148,40 +167,6 @@ export class CohortService {
     return cohort;
   }
 
-  async enrollUserInCohort(cohortId: string, userId: string) {
-    const cohort = await prisma.cohort.findUnique({
-      where: { id: cohortId },
-    });
-
-    if (!cohort) {
-      throw new Error("COHORT_NOT_FOUND");
-    }
-
-    if (cohort.instructorId === userId) {
-      return { message: "Owner already has full access", cohortId };
-    }
-
-    const existingEnrollment = await prisma.enrollment.findUnique({
-      where: {
-        userId_cohortId: {
-          userId,
-          cohortId,
-        },
-      },
-    });
-
-    if (existingEnrollment) {
-      return existingEnrollment;
-    }
-
-    return prisma.enrollment.create({
-      data: {
-        userId,
-        cohortId,
-      },
-    });
-  }
-
   async createCohort(data: {
     title: string;
     description: string;
@@ -241,16 +226,27 @@ export class CohortService {
     });
   }
 
-  async updateCohort(cohortId: string, data: any) {
+  /**
+   * Update with strict field whitelist (rejects instructorId, slug, status, isLiveActive, currentLiveUrl)
+   */
+  async updateCohort(cohortId: string, data: any, user: { userId: string; role: string }) {
+    await this.assertCanManageCohort(cohortId, user);
+
+    const safeData: any = {};
+    if (data.title !== undefined) safeData.title = data.title.trim();
+    if (data.description !== undefined) safeData.description = data.description.trim();
+    if (data.thumbnail !== undefined) safeData.thumbnail = data.thumbnail?.trim() || null;
+    if (data.price !== undefined) safeData.price = Number(data.price);
+    if (data.originalPrice !== undefined) safeData.originalPrice = data.originalPrice ? Number(data.originalPrice) : null;
+    if (data.validity !== undefined) safeData.validity = data.validity;
+    if (data.deliveryType !== undefined) safeData.deliveryType = data.deliveryType;
+    if (data.startDate !== undefined) safeData.startDate = data.startDate ? new Date(data.startDate) : null;
+    if (data.endDate !== undefined) safeData.endDate = data.endDate ? new Date(data.endDate) : null;
+    if (data.discordUrl !== undefined) safeData.discordUrl = data.discordUrl?.trim() || null;
+
     return prisma.cohort.update({
       where: { id: cohortId },
-      data: {
-        ...data,
-        price: data.price !== undefined ? Number(data.price) : undefined,
-        originalPrice: data.originalPrice !== undefined ? Number(data.originalPrice) : undefined,
-        startDate: data.startDate ? new Date(data.startDate) : undefined,
-        endDate: data.endDate ? new Date(data.endDate) : undefined,
-      },
+      data: safeData,
     });
   }
 
@@ -303,11 +299,18 @@ export class CohortService {
     });
   }
 
-  async startLiveSession(cohortId: string, zoomUrl: string) {
+  async startLiveSession(cohortId: string, zoomUrl: string, user: { userId: string; role: string }) {
+    await this.assertCanManageCohort(cohortId, user);
+
+    if (!zoomUrl || !/^https:\/\/[^\s]+$/.test(zoomUrl)) {
+      throw new Error("INVALID_LIVE_URL");
+    }
+
     return cohortRepository.updateLiveStatus(cohortId, true, zoomUrl);
   }
 
-  async endLiveSession(cohortId: string) {
+  async endLiveSession(cohortId: string, user: { userId: string; role: string }) {
+    await this.assertCanManageCohort(cohortId, user);
     return cohortRepository.updateLiveStatus(cohortId, false, null);
   }
 

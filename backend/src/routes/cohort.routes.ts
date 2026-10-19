@@ -21,17 +21,12 @@ router.get("/", optionalAuthenticate, (req, res, next) =>
   cohortController.getCohorts(req, res, next)
 );
 
-// 3. Cohort Enrollment Endpoint (Used by CohortDetail.tsx)
-router.post("/:id/enroll", authenticate, (req, res, next) =>
-  cohortController.enroll(req, res, next)
-);
-
-// 4. Classroom / Learning Player Endpoint (Used by CoursePlayer.tsx)
+// 3. Classroom / Learning Player Endpoint (Used by CoursePlayer.tsx)
 router.get("/:id/curriculum", authenticate, (req, res, next) =>
   cohortController.getCurriculum(req, res, next)
 );
 
-// 5. Instructor / Admin management routes
+// 4. Instructor / Admin management routes
 router.post(
   "/",
   authenticate,
@@ -57,17 +52,17 @@ router.post(
   "/:id/start-live",
   authenticate,
   authorize(Role.INSTRUCTOR, Role.ADMIN),
-  (req, res) => cohortController.startLive(req, res)
+  (req, res, next) => cohortController.startLive(req, res, next)
 );
 
 router.post(
   "/:id/end-live",
   authenticate,
   authorize(Role.INSTRUCTOR, Role.ADMIN),
-  (req, res) => cohortController.endLive(req, res)
+  (req, res, next) => cohortController.endLive(req, res, next)
 );
 
-// 6. Student live access & Attendance logs
+// 5. Student live access & Attendance logs
 router.get("/:id/join-live", authenticate, attendanceController.joinLive);
 router.get(
   "/:id/attendance",
@@ -76,7 +71,7 @@ router.get(
   attendanceController.getAttendance
 );
 
-// 7. General Cohort Details by Slug or ID (Placed at the bottom so subpaths are not caught as slugs)
+// 6. General Cohort Details by Slug or ID (Placed at bottom so subpaths are not caught as slugs)
 router.get("/:slug", optionalAuthenticate, (req, res, next) =>
   cohortController.getCohortBySlug(req, res)
 );

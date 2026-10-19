@@ -1,6 +1,7 @@
 import { ProgressRepository } from "../repositories/progress.repository.js";
 import { ContentRepository } from "../repositories/content.repository.js";
 import { EnrollmentRepository } from "../repositories/enrollment.repository.js";
+import { notFound, forbidden, badRequest } from "../utils/httpError.js";
 
 const progressRepo = new ProgressRepository();
 const contentRepo = new ContentRepository();
@@ -13,25 +14,41 @@ export class ProgressService {
     watchedSeconds: number;
     isCompleted?: boolean;
   }) {
-    const content = await contentRepo.findContentById(params.contentId);
-    if (!content) {
-      const error: any = new Error("Content not found");
-      error.statusCode = 404;
-      throw error;
+    // 1. Validate watchedSeconds number format and bounds
+    if (
+      typeof params.watchedSeconds !== "number" ||
+      !Number.isFinite(params.watchedSeconds) ||
+      params.watchedSeconds < 0
+    ) {
+      throw badRequest("Field 'watchedSeconds' must be a non-negative finite number", "INVALID_WATCHED_SECONDS");
     }
 
-    // Verify enrollment via parent folder -> cohort
+    const content = await contentRepo.findContentById(params.contentId);
+    if (!content) {
+      throw notFound("Content lecture not found", "CONTENT_NOT_FOUND");
+    }
+
+    // 2. Verify active enrollment via parent folder -> cohort
     const enrollment = await enrollmentRepo.findEnrollment(
       params.userId,
       content.folder.cohortId
     );
     if (!enrollment) {
-      const error: any = new Error("You must be enrolled to track progress");
-      error.statusCode = 403;
-      throw error;
+      throw forbidden("You must be enrolled in this cohort to track learning progress", "FORBIDDEN_NOT_ENROLLED");
     }
 
-    return progressRepo.upsertProgress(params);
+    // 3. Upper bound sanity check: progress cannot exceed lecture duration + 30s buffer
+    const duration = content.durationSec || 0;
+    const clampedWatchedSeconds =
+      duration > 0 ? Math.min(params.watchedSeconds, duration + 30) : params.watchedSeconds;
+
+    return progressRepo.upsertProgress({
+      userId: params.userId,
+      contentId: params.contentId,
+      watchedSeconds: Math.floor(clampedWatchedSeconds),
+      isCompleted: params.isCompleted,
+      durationSec: duration,
+    });
   }
 
   async getContentProgress(userId: string, contentId: string) {

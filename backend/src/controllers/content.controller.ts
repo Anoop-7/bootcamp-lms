@@ -11,14 +11,24 @@ export class ContentController {
     try {
       const cohortId = req.params.cohortId as string;
       const { title, order } = req.body;
+      const user = { userId: req.user!.userId, role: req.user!.role };
+
       if (!title) {
         res.status(400).json({ status: "error", message: "Folder title is required" });
         return;
       }
 
-      const folder = await contentService.addFolder({ title, cohortId, order });
+      const folder = await contentService.addFolder({ title, cohortId, order }, user);
       res.status(201).json({ status: "success", data: folder });
     } catch (err: any) {
+      if (err.message === "COHORT_NOT_FOUND") {
+        res.status(404).json({ status: "error", message: "Cohort not found" });
+        return;
+      }
+      if (err.message === "FORBIDDEN_COHORT_MANAGE") {
+        res.status(403).json({ status: "error", message: "You are not authorized to add folders to this cohort" });
+        return;
+      }
       next(err);
     }
   }
@@ -27,13 +37,24 @@ export class ContentController {
     try {
       const folderId = req.params.folderId as string;
       const { title } = req.body;
+      const user = { userId: req.user!.userId, role: req.user!.role };
+
       if (!title || !title.trim()) {
         res.status(400).json({ status: "error", message: "Folder title is required" });
         return;
       }
-      const updated = await contentService.updateFolder(folderId, title);
+
+      const updated = await contentService.updateFolder(folderId, title, user);
       res.status(200).json({ status: "success", data: updated });
     } catch (err: any) {
+      if (err.message === "FOLDER_NOT_FOUND") {
+        res.status(404).json({ status: "error", message: "Folder not found" });
+        return;
+      }
+      if (err.message === "FORBIDDEN_COHORT_MANAGE") {
+        res.status(403).json({ status: "error", message: "You are not authorized to edit folders in this cohort" });
+        return;
+      }
       next(err);
     }
   }
@@ -41,9 +62,19 @@ export class ContentController {
   async deleteFolder(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const folderId = req.params.folderId as string;
-      await contentService.deleteFolder(folderId);
+      const user = { userId: req.user!.userId, role: req.user!.role };
+
+      await contentService.deleteFolder(folderId, user);
       res.status(200).json({ status: "success", message: "Folder deleted" });
     } catch (err: any) {
+      if (err.message === "FOLDER_NOT_FOUND") {
+        res.status(404).json({ status: "error", message: "Folder not found" });
+        return;
+      }
+      if (err.message === "FORBIDDEN_COHORT_MANAGE") {
+        res.status(403).json({ status: "error", message: "You are not authorized to delete folders in this cohort" });
+        return;
+      }
       next(err);
     }
   }
@@ -52,6 +83,7 @@ export class ContentController {
     try {
       const folderId = req.params.folderId as string;
       const { title, type, videoAssetId, resourceDoc, durationSec, order } = req.body;
+      const user = { userId: req.user!.userId, role: req.user!.role };
 
       if (!title || !type) {
         res.status(400).json({ status: "error", message: "Content title and type are required" });
@@ -66,10 +98,26 @@ export class ContentController {
         resourceDoc,
         durationSec,
         order,
-      });
+      }, user);
 
       res.status(201).json({ status: "success", data: content });
     } catch (err: any) {
+      if (err.message === "FOLDER_NOT_FOUND") {
+        res.status(404).json({ status: "error", message: "Folder not found" });
+        return;
+      }
+      if (err.message === "FORBIDDEN_COHORT_MANAGE") {
+        res.status(403).json({ status: "error", message: "You are not authorized to add content to this cohort" });
+        return;
+      }
+      if (err.message === "INVALID_CONTENT_TYPE") {
+        res.status(400).json({ status: "error", message: "Invalid content type provided" });
+        return;
+      }
+      if (err.message === "VIDEO_ASSET_NOT_FOUND") {
+        res.status(404).json({ status: "error", message: "Referenced video asset does not exist" });
+        return;
+      }
       next(err);
     }
   }
@@ -77,9 +125,19 @@ export class ContentController {
   async deleteContent(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = req.params.id as string;
-      await contentService.deleteContent(id);
+      const user = { userId: req.user!.userId, role: req.user!.role };
+
+      await contentService.deleteContent(id, user);
       res.status(200).json({ status: "success", message: "Content deleted" });
     } catch (err: any) {
+      if (err.message === "CONTENT_NOT_FOUND") {
+        res.status(404).json({ status: "error", message: "Content not found" });
+        return;
+      }
+      if (err.message === "FORBIDDEN_COHORT_MANAGE") {
+        res.status(403).json({ status: "error", message: "You are not authorized to delete content from this cohort" });
+        return;
+      }
       next(err);
     }
   }
@@ -92,7 +150,6 @@ export class ContentController {
 
       const data = await contentService.getSecureContentUrl(id, userId, userRole);
 
-      // Issue CloudFront Signed Cookies for HLS streams
       if (data.url.includes("cloudfront.net")) {
         try {
           const cookies = generateCloudFrontCookies("/*");
@@ -107,7 +164,6 @@ export class ContentController {
           res.cookie("CloudFront-Signature", cookies["CloudFront-Signature"], cookieOptions);
           res.cookie("CloudFront-Key-Pair-Id", cookies["CloudFront-Key-Pair-Id"], cookieOptions);
 
-          // Return cookies in JSON payload for cross-origin HLS client loaders
           (data as any).cookies = cookies;
         } catch (cookieErr) {
           console.warn("⚠️ [CloudFront Signer] Could not issue signed cookies:", cookieErr);
@@ -132,7 +188,6 @@ export class ContentController {
     }
   }
 
-  // Auto-Resume: Fetch current student watch progress for this content
   async getContentProgress(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const contentId = req.params.id as string;
@@ -196,8 +251,6 @@ export class ContentController {
       next(err);
     }
   }
-
-  // --- Multipart Upload Controllers for Large Videos ---
 
   async initiateMultipartUpload(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {

@@ -1,24 +1,27 @@
 import { Role, CohortStatus, DeliveryType, ContentType, VideoStatus } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { prisma } from "../src/config/db";
+import { prisma } from "../src/config/db.js";
 
 async function main() {
-  console.log("🌱 Starting database seeding...");
+  // Guard: Never execute seed script in production
+  if (process.env.NODE_ENV === "production") {
+    console.error("❌ Refusing to run seed script in production environment.");
+    process.exit(1);
+  }
 
-  // 1. Clean existing records (optional, since db is already clear)
-  // await prisma.watchProgress.deleteMany();
-  // await prisma.content.deleteMany();
-  // await prisma.videoAsset.deleteMany();
-  // await prisma.folder.deleteMany();
-  // await prisma.enrollment.deleteMany();
-  // await prisma.cohort.deleteMany();
-  // await prisma.user.deleteMany();
+  console.log("🌱 Starting idempotent database seeding...");
 
-  const hashedPassword = await bcrypt.hash("Password123!", 10);
+  const defaultPassword = process.env.SEED_DEFAULT_PASSWORD || "Password123!";
+  const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
-  // 2. Create Instructor and Admin User
-  const instructor = await prisma.user.create({
-    data: {
+  // 1. Upsert Instructor User
+  const instructor = await prisma.user.upsert({
+    where: { email: "instructor2@bootcamp.com" },
+    update: {
+      role: Role.INSTRUCTOR,
+      name: "Assistant Instructor",
+    },
+    create: {
       name: "Assistant Instructor",
       email: "instructor2@bootcamp.com",
       password: hashedPassword,
@@ -26,8 +29,14 @@ async function main() {
     },
   });
 
-  const admin = await prisma.user.create({
-    data: {
+  // 2. Upsert Admin User
+  await prisma.user.upsert({
+    where: { email: "admin@bootcamp.com" },
+    update: {
+      role: Role.ADMIN,
+      name: "Admin User",
+    },
+    create: {
       name: "Admin User",
       email: "admin@bootcamp.com",
       password: hashedPassword,
@@ -35,9 +44,14 @@ async function main() {
     },
   });
 
-  // 3. Create Student User
-  const student = await prisma.user.create({
-    data: {
+  // 3. Upsert Student User
+  const student = await prisma.user.upsert({
+    where: { email: "student2@bootcamp.com" },
+    update: {
+      role: Role.STUDENT,
+      name: "Test Student2",
+    },
+    create: {
       name: "Test Student2",
       email: "student2@bootcamp.com",
       password: hashedPassword,
@@ -45,9 +59,15 @@ async function main() {
     },
   });
 
-  // 4. Create a Test Cohort
-  const cohort = await prisma.cohort.create({
-    data: {
+  // 4. Upsert Test Cohort
+  const cohort = await prisma.cohort.upsert({
+    where: { slug: "full-stack-web-development-bootcamp" },
+    update: {
+      title: "Full Stack Web Development Bootcamp",
+      price: 7999,
+      instructorId: instructor.id,
+    },
+    create: {
       title: "Full Stack Web Development Bootcamp",
       slug: "full-stack-web-development-bootcamp",
       description: "Master Full stack development, scaling, and event-driven systems from first principles.",
@@ -58,47 +78,78 @@ async function main() {
     },
   });
 
-  // 5. Enroll the Student
-  await prisma.enrollment.create({
-    data: {
+  // 5. Ensure Student Enrollment exists
+  await prisma.enrollment.upsert({
+    where: {
+      userId_cohortId: {
+        userId: student.id,
+        cohortId: cohort.id,
+      },
+    },
+    update: {},
+    create: {
       userId: student.id,
       cohortId: cohort.id,
     },
   });
 
-  // 6. Create a Curriculum Folder
-  const folder = await prisma.folder.create({
-    data: {
-      title: "Module 1: Introduction to Full Stack Development",
+  // 6. Ensure Curriculum Folder exists
+  let folder = await prisma.folder.findFirst({
+    where: {
       cohortId: cohort.id,
-      order: 1,
+      title: "Module 1: Introduction to Full Stack Development",
     },
   });
 
-  // 7. Create a Sample Video Asset (Simulating a ready transcoded or uploaded video)
-  const videoAsset = await prisma.videoAsset.create({
-    data: {
-      originalKey: "videos/sample-lecture-original.mp4",
-      hlsManifestKey: "hls/sample-lecture/master.m3u8",
-      posterKey: "posters/sample-lecture.jpg",
-      durationSec: 1840,
-      status: VideoStatus.READY,
-    },
+  if (!folder) {
+    folder = await prisma.folder.create({
+      data: {
+        title: "Module 1: Introduction to Full Stack Development",
+        cohortId: cohort.id,
+        order: 1,
+      },
+    });
+  }
+
+  // 7. Ensure Video Asset exists
+  let videoAsset = await prisma.videoAsset.findFirst({
+    where: { originalKey: "videos/sample-lecture-original.mp4" },
   });
+
+  if (!videoAsset) {
+    videoAsset = await prisma.videoAsset.create({
+      data: {
+        originalKey: "videos/sample-lecture-original.mp4",
+        hlsManifestKey: "hls/sample-lecture/master.m3u8",
+        posterKey: "posters/sample-lecture.jpg",
+        durationSec: 1840,
+        status: VideoStatus.READY,
+      },
+    });
+  }
 
   // 8. Link Video Asset to Content Lecture
-  await prisma.content.create({
-    data: {
-      title: "Introduction to Full Stack Development",
-      type: ContentType.RECORDING,
+  const existingContent = await prisma.content.findFirst({
+    where: {
       folderId: folder.id,
-      videoAssetId: videoAsset.id,
-      durationSec: 1840,
-      order: 1,
+      title: "Introduction to Full Stack Development",
     },
   });
 
-  console.log("✅ Seeding finished successfully!");
+  if (!existingContent) {
+    await prisma.content.create({
+      data: {
+        title: "Introduction to Full Stack Development",
+        type: ContentType.RECORDING,
+        folderId: folder.id,
+        videoAssetId: videoAsset.id,
+        durationSec: 1840,
+        order: 1,
+      },
+    });
+  }
+
+  console.log("✅ Database seeded idempotently!");
 }
 
 main()

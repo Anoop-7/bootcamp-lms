@@ -12,6 +12,7 @@ import {
   Radio,
   Loader2,
   ShieldCheck,
+  CreditCard,
 } from "lucide-react";
 
 export const CohortDetail: React.FC = () => {
@@ -45,9 +46,12 @@ export const CohortDetail: React.FC = () => {
       navigate(`/cohorts/${cohort.id}/learn`);
     },
     onError: (err: any) => {
-      if (err.response?.status === 409 && cohort) {
+      const status = err.response?.status;
+      if (status === 409 && cohort) {
         queryClient.invalidateQueries({ queryKey: ["cohort-curriculum", cohort.id] });
         navigate(`/cohorts/${cohort.id}/learn`);
+      } else if (status === 402) {
+        setEnrollError("This is a premium cohort. Please proceed to checkout to complete your enrollment.");
       } else {
         setEnrollError(err.response?.data?.message || "Failed to complete enrollment");
       }
@@ -59,6 +63,7 @@ export const CohortDetail: React.FC = () => {
   const isAdmin = user?.role === "ADMIN";
   const isEnrolled = Boolean(cohort?.isEnrolled);
   const hasAccess = isOwner || isAdmin || isEnrolled;
+  const isPaidCohort = Boolean(cohort && (cohort.price ?? 0) > 0);
 
   const handleEnrollClick = () => {
     if (!isAuthenticated) {
@@ -70,6 +75,7 @@ export const CohortDetail: React.FC = () => {
       return;
     }
     if (cohort) {
+      setEnrollError(null);
       enrollMutation.mutate(cohort.id);
     }
   };
@@ -95,11 +101,13 @@ export const CohortDetail: React.FC = () => {
   }
 
   const priceValue = cohort.price ?? 0;
-  const formattedPrice = priceValue.toLocaleString("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  });
+  const formattedPrice = priceValue === 0
+    ? "Free"
+    : priceValue.toLocaleString("en-IN", {
+        style: "currency",
+        currency: "INR",
+        maximumFractionDigits: 0,
+      });
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -135,7 +143,7 @@ export const CohortDetail: React.FC = () => {
               <div>
                 <span className="text-xs text-neutral-500 uppercase font-semibold">Taught By</span>
                 <h4 className="text-sm font-bold text-white">{cohort.instructor.name}</h4>
-                <p className="text-xs text-neutral-400">{cohort.instructor.email}</p>
+                <p className="text-xs text-neutral-400">Verified Mentor</p>
               </div>
             </div>
           )}
@@ -178,7 +186,7 @@ export const CohortDetail: React.FC = () => {
             <span className="text-xs text-neutral-500 block uppercase font-medium">Registration Fee</span>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="text-3xl font-black text-white">{formattedPrice}</span>
-              <span className="text-xs text-neutral-400">inclusive of all taxes</span>
+              {priceValue > 0 && <span className="text-xs text-neutral-400">inclusive of all taxes</span>}
             </div>
 
             {enrollError && (
@@ -210,13 +218,19 @@ export const CohortDetail: React.FC = () => {
                 <button
                   onClick={handleEnrollClick}
                   disabled={enrollMutation.isPending}
-                  className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-sm rounded-xl transition-colors shadow-sm"
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-sm rounded-xl transition-colors shadow-sm cursor-pointer"
                 >
                   {enrollMutation.isPending ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : isPaidCohort ? (
+                    <>
+                      <CreditCard className="w-4 h-4" />
+                      <span>Enroll & Checkout</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
                   ) : (
                     <>
-                      <span>Enroll in Cohort</span>
+                      <span>Enroll in Free Cohort</span>
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}

@@ -1,5 +1,48 @@
 import prisma from "../config/db.js";
-import { CohortStatus, VideoStatus } from "@prisma/client";
+import { CohortStatus, VideoStatus, ContentType, Prisma } from "@prisma/client";
+
+// Public instructor projection (scrubs email to prevent scraping/phishing)
+const PUBLIC_INSTRUCTOR_SELECT = {
+  id: true,
+  name: true,
+  avatar: true,
+} satisfies Prisma.UserSelect;
+
+const getCohortInclude = (forStudent: boolean): Prisma.CohortInclude => ({
+  instructor: {
+    select: PUBLIC_INSTRUCTOR_SELECT,
+  },
+  folders: {
+    orderBy: { order: "asc" },
+    include: {
+      contents: {
+        where: forStudent
+          ? {
+              OR: [
+                {
+                  type: {
+                    notIn: [ContentType.RECORDING, ContentType.OFFLINE_VIDEO],
+                  },
+                },
+                { videoAsset: { status: VideoStatus.READY } },
+              ],
+            }
+          : undefined,
+        orderBy: { order: "asc" },
+        include: {
+          videoAsset: {
+            select: {
+              id: true,
+              status: true,
+              posterKey: true,
+              durationSec: true,
+            },
+          },
+        },
+      },
+    },
+  },
+});
 
 export class CohortRepository {
   async findAllPublic() {
@@ -16,12 +59,7 @@ export class CohortRepository {
       orderBy: { createdAt: "desc" },
       include: {
         instructor: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-          },
+          select: PUBLIC_INSTRUCTOR_SELECT,
         },
       },
     });
@@ -30,84 +68,14 @@ export class CohortRepository {
   async findById(id: string, forStudent: boolean = false) {
     return prisma.cohort.findUnique({
       where: { id },
-      include: {
-        instructor: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-          },
-        },
-        folders: {
-          orderBy: { order: "asc" },
-          include: {
-            contents: {
-              where: forStudent
-                ? {
-                    OR: [
-                      { type: { notIn: ["RECORDING", "OFFLINE_VIDEO"] } },
-                      { videoAsset: { status: VideoStatus.READY } },
-                    ],
-                  }
-                : undefined,
-              orderBy: { order: "asc" },
-              include: {
-                videoAsset: {
-                  select: {
-                    id: true,
-                    status: true,
-                    posterKey: true,
-                    durationSec: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
+      include: getCohortInclude(forStudent),
     });
   }
 
   async findBySlug(slug: string, forStudent: boolean = false) {
     return prisma.cohort.findUnique({
       where: { slug },
-      include: {
-        instructor: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatar: true,
-          },
-        },
-        folders: {
-          orderBy: { order: "asc" },
-          include: {
-            contents: {
-              where: forStudent
-                ? {
-                    OR: [
-                      { type: { notIn: ["RECORDING", "OFFLINE_VIDEO"] } },
-                      { videoAsset: { status: VideoStatus.READY } },
-                    ],
-                  }
-                : undefined,
-              orderBy: { order: "asc" },
-              include: {
-                videoAsset: {
-                  select: {
-                    id: true,
-                    status: true,
-                    posterKey: true,
-                    durationSec: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
+      include: getCohortInclude(forStudent),
     });
   }
 

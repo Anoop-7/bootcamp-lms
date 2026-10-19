@@ -129,6 +129,41 @@ export class AdminController {
     }
   }
 
+  async deleteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const currentAdminId = req.user!.userId;
+
+      // Invoking AdminService instead of InviteService
+      await adminService.deleteUser(id as string, currentAdminId);
+      
+      res.status(200).json({
+        status: "success",
+        message: "User account and all associated records deleted successfully.",
+      });
+    } catch (err: any) {
+      if (err.message === "CANNOT_DELETE_SELF") {
+        res.status(400).json({
+          status: "error",
+          message: "Security guard: You cannot delete your own administrator account.",
+        });
+        return;
+      }
+      if (err.message === "USER_NOT_FOUND") {
+        res.status(404).json({ status: "error", message: "User not found." });
+        return;
+      }
+      if (err.message === "INSTRUCTOR_HAS_COHORTS") {
+        res.status(400).json({
+          status: "error",
+          message: "Cannot delete an instructor with active cohorts. Reassign or remove their cohorts first.",
+        });
+        return;
+      }
+      next(err);
+    }
+  }
+
   // --- Cohort & Enrollment Management ---
   async listCohorts(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {

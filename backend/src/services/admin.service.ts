@@ -87,4 +87,38 @@ export class AdminService {
       },
     });
   }
+
+  async deleteUser(userId: string, currentAdminId: string): Promise<void> {
+    if (userId === currentAdminId) {
+      throw new Error("CANNOT_DELETE_SELF");
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        _count: {
+          select: { cohortsTeaching: true },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new Error("USER_NOT_FOUND");
+    }
+
+    // Safety guard: Prevent deleting instructors with existing cohorts to avoid orphaned data
+    if (user._count.cohortsTeaching > 0) {
+      throw new Error("INSTRUCTOR_HAS_COHORTS");
+    }
+
+    // Atomic transaction cleaning up student-associated records
+    await prisma.$transaction([
+      prisma.watchProgress.deleteMany({ where: { userId } }),
+      prisma.liveAttendance.deleteMany({ where: { userId } }),
+      prisma.enrollment.deleteMany({ where: { userId } }),
+      prisma.passwordReset.deleteMany({ where: { email: user.email } }),
+      prisma.instructorInvite.deleteMany({ where: { email: user.email } }),
+      prisma.user.delete({ where: { id: userId } }),
+    ]);
+  }
 }

@@ -1,5 +1,6 @@
 import { prisma } from "../config/db.js";
 import { Enrollment, Order, PaymentStatus } from "@prisma/client";
+import crypto from "crypto";
 
 export class EnrollmentRepository {
   async findEnrollment(userId: string, cohortId: string): Promise<Enrollment | null> {
@@ -54,8 +55,8 @@ export class EnrollmentRepository {
           cohortId: params.cohortId,
           amount: params.amount,
           currency: "INR",
-          razorpayOrderId: params.razorpayOrderId || `order_free_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-          razorpayPaymentId: params.razorpayPaymentId || `pay_mock_${Date.now()}`,
+          razorpayOrderId: params.razorpayOrderId || `order_${crypto.randomUUID()}`,
+          razorpayPaymentId: params.razorpayPaymentId || `pay_mock_${crypto.randomUUID()}`,
           status: PaymentStatus.SUCCESS,
         },
       });

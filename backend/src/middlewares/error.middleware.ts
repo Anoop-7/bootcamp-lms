@@ -1,79 +1,45 @@
 import { Request, Response, NextFunction } from "express";
-import { Prisma } from "@prisma/client";
+import { HttpError } from "../utils/httpError.js";
+import { env } from "../config/env.js";
 
-export function errorMiddleware(
+export const errorHandler = (
   err: any,
   _req: Request,
   res: Response,
   _next: NextFunction
-): void {
-  // 1. Log internal error details on the server for debugging
-  console.error("[SERVER_ERROR]:", err);
-
-  // 2. Handle Prisma Database-Specific Errors
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    switch (err.code) {
-      case "P2002": {
-        // Unique constraint violation
-        const target = Array.isArray(err.meta?.target)
-          ? err.meta?.target.join(", ")
-          : "field";
-        res.status(409).json({
-          status: "error",
-          message: `A record with this ${target} already exists. Please choose a different value.`,
-        });
-        return;
-      }
-      case "P2025": {
-        // Record not found
-        res.status(404).json({
-          status: "error",
-          message: "The requested resource could not be found.",
-        });
-        return;
-      }
-      case "P2003": {
-        // Foreign key constraint failure
-        res.status(400).json({
-          status: "error",
-          message: "Operation failed because related records are missing or protected.",
-        });
-        return;
-      }
-      default: {
-        res.status(400).json({
-          status: "error",
-          message: "Database operation failed. Please check your data and try again.",
-        });
-        return;
-      }
-    }
-  }
-
-  // 3. Handle Prisma Validation Errors (bad types, missing fields)
-  if (err instanceof Prisma.PrismaClientValidationError) {
-    res.status(400).json({
-      status: "error",
-      message: "Invalid data format or missing required fields.",
-    });
-    return;
-  }
-
-  // 4. Handle Known Application/Business Errors
-  if (err.status && typeof err.status === "number") {
+): void => {
+  // 1. Handled Domain HttpErrors
+  if (err instanceof HttpError) {
     res.status(err.status).json({
       status: "error",
-      message: err.message || "An unexpected error occurred.",
+      message: err.message,
+      ...(err.code && { code: err.code }),
     });
     return;
   }
 
-  // 5. Fallback for unhandled internal exceptions (Never expose raw stack traces)
-  const isProduction = process.env.NODE_ENV === "production";
+  // 2. Prisma Database Errors
+  if (err.code === "P2002") {
+    res.status(409).json({
+      status: "error",
+      message: "A record with this unique value already exists.",
+    });
+    return;
+  }
+  if (err.code === "P2025") {
+    res.status(404).json({
+      status: "error",
+      message: "The requested record was not found.",
+    });
+    return;
+  }
+
+  // 3. Unhandled Fallbacks
+  console.error("💥 [UNCAUGHT SERVER EXCEPTION]:", err);
+
+  const isProd = env.NODE_ENV === "production";
   res.status(500).json({
     status: "error",
-    message: isProduction
-      ? "An internal server error occurred. Please try again shortly."
-      : err.message || "Internal server error",
+    message: isProd ? "Internal Server Error" : (err.message || "An unexpected error occurred"),
   });
-}
+};

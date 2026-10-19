@@ -26,6 +26,7 @@ export const Login: React.FC = () => {
   const [resetNotification, setResetNotification] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
   const [isResetLoading, setIsResetLoading] = useState(false);
+  const [devOtp, setDevOtp] = useState<string | null>(null);
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -40,7 +41,6 @@ export const Login: React.FC = () => {
       const { token, user } = res.data.data;
       login(token, user);
 
-      // Role-based post-login redirection
       if (user.role === "ADMIN") {
         navigate("/admin");
       } else if (user.role === "INSTRUCTOR") {
@@ -60,9 +60,14 @@ export const Login: React.FC = () => {
     setIsResetLoading(true);
     setResetError(null);
     setResetNotification(null);
+    setDevOtp(null);
+
     try {
       const res = await api.post("/auth/forgot-password", { email: forgotEmail });
-      setResetNotification(res.data.data.message);
+      setResetNotification(res.data.message || "OTP dispatched successfully.");
+      if (res.data?.data?.devOtp) {
+        setDevOtp(res.data.data.devOtp);
+      }
       setResetStep("VERIFY");
     } catch (err: any) {
       setResetError(err.response?.data?.message || "Failed to dispatch OTP");
@@ -88,6 +93,7 @@ export const Login: React.FC = () => {
       setForgotEmail("");
       setOtpCode("");
       setNewPassword("");
+      setDevOtp(null);
     } catch (err: any) {
       setResetError(err.response?.data?.message || "Verification failed");
     } finally {
@@ -135,6 +141,7 @@ export const Login: React.FC = () => {
                   setResetStep("REQUEST");
                   setResetError(null);
                   setResetNotification(null);
+                  setDevOtp(null);
                   setShowForgotModal(true);
                 }}
                 className="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors"
@@ -170,7 +177,6 @@ export const Login: React.FC = () => {
         </p>
       </div>
 
-      {/* Forgot Password Modal */}
       {showForgotModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-[#121216] border border-neutral-800 rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl relative">
@@ -186,7 +192,18 @@ export const Login: React.FC = () => {
               <h3 className="text-base font-bold text-white">Reset Password</h3>
             </div>
 
-            {/* Notification Alert Message */}
+            {devOtp && (
+              <div className="p-3 bg-amber-950/60 border border-amber-800/80 rounded-xl text-xs text-amber-300 flex flex-col gap-1">
+                <div className="flex items-center justify-between font-semibold">
+                  <span>Development OTP</span>
+                  <span className="font-mono bg-amber-900/50 px-2 py-0.5 rounded text-amber-200">{devOtp}</span>
+                </div>
+                <p className="text-[11px] text-amber-400/80">
+                  SMTP dispatch skipped or failed. Use this code to reset.
+                </p>
+              </div>
+            )}
+
             {resetNotification && (
               <div className="p-3 bg-indigo-950/60 border border-indigo-800/80 rounded-xl text-xs text-indigo-300 flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />

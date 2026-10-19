@@ -216,6 +216,17 @@ export const AdminDashboard: React.FC = () => {
     onError: (err: any) => alert(err.response?.data?.message || "Failed to update role"),
   });
 
+  const deleteUserMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      await api.delete(`/admin/users/${userId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      alert("User and associated records permanently deleted.");
+    },
+    onError: (err: any) => alert(err.response?.data?.message || "Failed to delete user"),
+  });
+
   const updateCohortStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
       const res = await api.patch(`/admin/cohorts/${id}/status`, { status });
@@ -500,7 +511,6 @@ export const AdminDashboard: React.FC = () => {
                         const inviteUrl = `${window.location.origin}/onboard/instructor?token=${inv.token}`;
                         return (
                           <tr key={inv.id} className="hover:bg-neutral-900/30 transition-colors">
-                            {/* Column 1: Candidate Email + Target Role Badge */}
                             <td className="py-3 px-4 font-mono font-medium text-neutral-200">
                               <div className="flex items-center gap-2">
                                 <span>{inv.email}</span>
@@ -516,13 +526,8 @@ export const AdminDashboard: React.FC = () => {
                               </div>
                             </td>
 
-                            {/* Column 2: Status */}
                             <td className="py-3 px-4">{getStatusBadge(inv)}</td>
-
-                            {/* Column 3: Invited By */}
                             <td className="py-3 px-4 text-neutral-400">{inv.invitedBy.name}</td>
-
-                            {/* Column 4: Expires At */}
                             <td className="py-3 px-4 text-neutral-400">
                               {new Date(inv.expiresAt).toLocaleDateString("en-US", {
                                 month: "short",
@@ -532,7 +537,6 @@ export const AdminDashboard: React.FC = () => {
                               })}
                             </td>
 
-                            {/* Column 5: Actions */}
                             <td className="py-3 px-4 text-right">
                               <div className="flex items-center justify-end gap-1.5">
                                 {inv.status === "PENDING" && (
@@ -671,10 +675,10 @@ export const AdminDashboard: React.FC = () => {
               <div>
                 <h2 className="text-base font-bold text-white flex items-center gap-2">
                   <Users className="w-4 h-4 text-indigo-400" />
-                  User Accounts Directory & Role Governance
+                  User Accounts Directory & Governance
                 </h2>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Inspect enrolled students, instructors, and elevate trusted users directly to Administrator.
+                  Inspect enrolled students, elevate user roles, or remove accounts along with their associated records.
                 </p>
               </div>
               <span className="text-xs text-neutral-400 font-medium">
@@ -690,7 +694,7 @@ export const AdminDashboard: React.FC = () => {
                     <th className="py-3 px-4">Role</th>
                     <th className="py-3 px-4">Activity</th>
                     <th className="py-3 px-4">Joined Date</th>
-                    <th className="py-3 px-4 text-right">Role Assignment</th>
+                    <th className="py-3 px-4 text-right">Actions & Roles</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-800/60">
@@ -747,26 +751,45 @@ export const AdminDashboard: React.FC = () => {
                                 Active Admin (You)
                               </span>
                             ) : (
-                              <select
-                                value={u.role}
-                                onChange={(e) => {
-                                  if (
-                                    window.confirm(
-                                      `Change role of "${u.name}" (${u.email}) from ${u.role} to ${e.target.value}?`
-                                    )
-                                  ) {
-                                    updateRoleMutation.mutate({
-                                      userId: u.id,
-                                      role: e.target.value,
-                                    });
-                                  }
-                                }}
-                                className="bg-neutral-900 border border-neutral-700 text-neutral-200 text-xs rounded-lg px-2.5 py-1 outline-none focus:border-indigo-500 cursor-pointer"
-                              >
-                                <option value="STUDENT">Student</option>
-                                <option value="INSTRUCTOR">Instructor</option>
-                                <option value="ADMIN">Admin (Superuser)</option>
-                              </select>
+                              <div className="flex items-center justify-end gap-2">
+                                <select
+                                  value={u.role}
+                                  onChange={(e) => {
+                                    if (
+                                      window.confirm(
+                                        `Change role of "${u.name}" (${u.email}) from ${u.role} to ${e.target.value}?`
+                                      )
+                                    ) {
+                                      updateRoleMutation.mutate({
+                                        userId: u.id,
+                                        role: e.target.value,
+                                      });
+                                    }
+                                  }}
+                                  className="bg-neutral-900 border border-neutral-700 text-neutral-200 text-xs rounded-lg px-2.5 py-1 outline-none focus:border-indigo-500 cursor-pointer"
+                                >
+                                  <option value="STUDENT">Student</option>
+                                  <option value="INSTRUCTOR">Instructor</option>
+                                  <option value="ADMIN">Admin (Superuser)</option>
+                                </select>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (
+                                      window.confirm(
+                                        `Are you sure you want to PERMANENTLY delete user "${u.name}" (${u.email})?\n\nThis will remove all their enrollments, progress, and verification tokens.`
+                                      )
+                                    ) {
+                                      deleteUserMutation.mutate(u.id);
+                                    }
+                                  }}
+                                  title="Delete User Account"
+                                  className="p-1.5 bg-neutral-900 hover:bg-red-950/60 border border-neutral-700 hover:border-red-800 text-neutral-400 hover:text-red-400 rounded-lg transition-colors"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>

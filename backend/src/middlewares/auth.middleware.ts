@@ -1,10 +1,13 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { Role } from "@prisma/client";
+import prisma from "../config/db.js";
+import { env } from "../config/env.js";
 
 export interface AuthUserPayload {
   userId: string;
   role: Role;
+  tokenVersion?: number;
 }
 
 declare global {
@@ -15,7 +18,11 @@ declare global {
   }
 }
 
-export const authenticate = (req: Request, res: Response, next: NextFunction): void => {
+export const authenticate = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -24,18 +31,34 @@ export const authenticate = (req: Request, res: Response, next: NextFunction): v
   }
 
   const token = authHeader.split(" ")[1];
-  const secret = process.env.JWT_SECRET;
-
-  if (!secret) {
-    res.status(500).json({ status: "error", message: "JWT secret not configured" });
-    return;
-  }
 
   try {
-    const decoded = jwt.verify(token, secret) as AuthUserPayload;
-    req.user = decoded;
+    const decoded = jwt.verify(token, env.JWT_SECRET) as AuthUserPayload;
+
+    // Database check: verify active user state and tokenVersion
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, role: true, tokenVersion: true },
+    });
+
+    if (!user) {
+      res.status(401).json({ status: "error", message: "User account no longer exists" });
+      return;
+    }
+
+    if (decoded.tokenVersion !== undefined && decoded.tokenVersion !== user.tokenVersion) {
+      res.status(401).json({ status: "error", message: "Session expired or revoked. Please login again." });
+      return;
+    }
+
+    req.user = {
+      userId: user.id,
+      role: user.role,
+      tokenVersion: user.tokenVersion,
+    };
+
     next();
-  } catch (err) {
+  } catch {
     res.status(401).json({ status: "error", message: "Invalid or expired token" });
   }
 };
@@ -56,21 +79,34 @@ export const authorize = (...allowedRoles: Role[]) => {
   };
 };
 
-export const optionalAuthenticate = (req: Request, _res: Response, next: NextFunction): void => {
+export const optionalAuthenticate = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return next();
   }
 
   const token = authHeader.split(" ")[1];
-  const secret = process.env.JWT_SECRET;
-  if (!secret) return next();
 
   try {
-    const decoded = jwt.verify(token, secret) as AuthUserPayload;
-    req.user = decoded;
+    const decoded = jwt.verify(token, env.JWT_SECRET) as AuthUserPayload;
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, role: true, tokenVersion: true },
+    });
+
+    if (user && (decoded.tokenVersion === undefined || decoded.tokenVersion === user.tokenVersion)) {
+      req.user = {
+        userId: user.id,
+        role: user.role,
+        tokenVersion: user.tokenVersion,
+      };
+    }
   } catch {
-    // Continue as guest if token is invalid
+    // Continue as guest if token is invalid or expired
   }
   next();
 };

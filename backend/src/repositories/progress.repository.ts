@@ -7,9 +7,35 @@ export class ProgressRepository {
     contentId: string;
     watchedSeconds: number;
     isCompleted?: boolean;
+    durationSec?: number;
   }): Promise<WatchProgress> {
-    const isCompleted = params.isCompleted ?? false;
-    const completedAt = isCompleted ? new Date() : null;
+    const existing = await prisma.watchProgress.findUnique({
+      where: {
+        userId_contentId: {
+          userId: params.userId,
+          contentId: params.contentId,
+        },
+      },
+    });
+
+    const currentMax = existing?.maxWatchedSeconds ?? 0;
+    const newMaxWatchedSeconds = Math.max(currentMax, params.watchedSeconds);
+
+    // Determine completion: once completed, remains completed
+    const wasAlreadyCompleted = existing?.isCompleted ?? false;
+    const meetsDurationThreshold =
+      params.durationSec && params.durationSec > 0
+        ? newMaxWatchedSeconds >= Math.floor(params.durationSec * 0.9)
+        : false;
+
+    const willBeCompleted =
+      wasAlreadyCompleted || Boolean(params.isCompleted) || meetsDurationThreshold;
+
+    const completedAt = wasAlreadyCompleted
+      ? existing?.completedAt ?? new Date()
+      : willBeCompleted
+      ? new Date()
+      : null;
 
     return prisma.watchProgress.upsert({
       where: {
@@ -20,16 +46,16 @@ export class ProgressRepository {
       },
       update: {
         watchedSeconds: params.watchedSeconds,
-        ...(params.isCompleted !== undefined && {
-          isCompleted: params.isCompleted,
-          completedAt: params.isCompleted ? new Date() : null,
-        }),
+        maxWatchedSeconds: newMaxWatchedSeconds,
+        isCompleted: willBeCompleted,
+        completedAt,
       },
       create: {
         userId: params.userId,
         contentId: params.contentId,
         watchedSeconds: params.watchedSeconds,
-        isCompleted,
+        maxWatchedSeconds: params.watchedSeconds,
+        isCompleted: willBeCompleted,
         completedAt,
       },
     });

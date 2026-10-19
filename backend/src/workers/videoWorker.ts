@@ -4,21 +4,26 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { Readable } from "node:stream";
-import { GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  AbortMultipartUploadCommand,
+} from "@aws-sdk/client-s3";
 import { VideoStatus } from "@prisma/client";
 import prisma from "../config/db.js";
 import s3Client from "../config/s3.js";
-import { ContentService } from "../services/content.service.js";
+import { env } from "../config/env.js";
 
-const contentService = new ContentService();
-const BUCKET = process.env.AWS_S3_BUCKET!;
+const BUCKET = env.AWS_S3_BUCKET;
+const MAX_TRANSCODE_ATTEMPTS = 3;
 
 function getFFmpegPath(): string {
   try {
     const installer = require("@ffmpeg-installer/ffmpeg");
     if (installer && installer.path) return installer.path;
   } catch {
-    // fallback
+    // fallback to PATH binary
   }
   return "ffmpeg";
 }
@@ -28,7 +33,7 @@ function getFFprobePath(): string {
     const probeInstaller = require("@ffprobe-installer/ffprobe");
     if (probeInstaller && probeInstaller.path) return probeInstaller.path;
   } catch {
-    // fallback
+    // fallback to PATH binary
   }
   return "ffprobe";
 }
@@ -153,12 +158,16 @@ function runFFmpegHLS(inputPath: string, outputDir: string): Promise<void> {
   });
 }
 
-async function processVideoAsset(asset: { id: string; originalKey: string }) {
-  console.log(`🎬 [Transcoder] Started processing asset: ${asset.id}`);
+async function processVideoAsset(asset: { id: string; originalKey: string; attempts: number }) {
+  console.log(`🎬 [Transcoder] Started processing asset: ${asset.id} (Attempt ${asset.attempts + 1}/${MAX_TRANSCODE_ATTEMPTS})`);
 
   await prisma.videoAsset.update({
     where: { id: asset.id },
-    data: { status: VideoStatus.ENCODING },
+    data: {
+      status: VideoStatus.ENCODING,
+      startedAt: new Date(),
+      attempts: { increment: 1 },
+    },
   });
 
   const tempDir = path.join(os.tmpdir(), `video-${asset.id}`);
@@ -225,6 +234,7 @@ async function processVideoAsset(asset: { id: string; originalKey: string }) {
           hlsManifestKey,
           posterKey,
           durationSec: detectedDuration,
+          errorMessage: null,
         },
       }),
       prisma.content.updateMany({
@@ -250,13 +260,27 @@ async function processVideoAsset(asset: { id: string; originalKey: string }) {
     }
   } catch (err: any) {
     console.error(`❌ [Transcoder] Failed to process asset ${asset.id}:`, err);
-    await prisma.videoAsset.update({
-      where: { id: asset.id },
-      data: {
-        status: VideoStatus.FAILED,
-        errorMessage: err.message || "FFmpeg transcoding failed",
-      },
-    });
+    
+    // Check if we should retry or fail permanently
+    const currentAttempts = asset.attempts + 1;
+    if (currentAttempts < MAX_TRANSCODE_ATTEMPTS) {
+      console.warn(`🔁 [Transcoder] Re-queueing asset ${asset.id} for retry (${currentAttempts}/${MAX_TRANSCODE_ATTEMPTS})`);
+      await prisma.videoAsset.update({
+        where: { id: asset.id },
+        data: {
+          status: VideoStatus.QUEUED,
+          errorMessage: `Attempt ${currentAttempts} failed: ${err.message || "Encoding error"}`,
+        },
+      });
+    } else {
+      await prisma.videoAsset.update({
+        where: { id: asset.id },
+        data: {
+          status: VideoStatus.FAILED,
+          errorMessage: `Exceeded max attempts (${MAX_TRANSCODE_ATTEMPTS}): ${err.message || "FFmpeg transcoding failed"}`,
+        },
+      });
+    }
   } finally {
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -266,17 +290,106 @@ async function processVideoAsset(asset: { id: string; originalKey: string }) {
   }
 }
 
+/**
+ * Sweeps for stalled S3 multipart uploads older than 24 hours
+ * and aborts them on S3 to prevent unbounded storage costs.
+ */
+async function abortStaleMultipartUploads() {
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const staleUploads = await prisma.videoAsset.findMany({
+    where: {
+      status: VideoStatus.UPLOADING,
+      createdAt: { lt: twentyFourHoursAgo },
+    },
+    select: { id: true, originalKey: true, uploadId: true },
+  });
+
+  for (const asset of staleUploads) {
+    if (asset.uploadId) {
+      try {
+        console.log(`🛑 [S3 Cleanup] Aborting abandoned multipart upload ${asset.uploadId} for key: ${asset.originalKey}`);
+        await s3Client.send(
+          new AbortMultipartUploadCommand({
+            Bucket: BUCKET,
+            Key: asset.originalKey,
+            UploadId: asset.uploadId,
+          })
+        );
+      } catch (s3Err) {
+        console.warn(`⚠️ [S3 Cleanup] Failed to abort multipart upload ${asset.uploadId}:`, s3Err);
+      }
+    }
+
+    await prisma.videoAsset.update({
+      where: { id: asset.id },
+      data: {
+        status: VideoStatus.FAILED,
+        errorMessage: "Upload abandoned or timed out (aborted on S3).",
+      },
+    });
+  }
+}
+
+/**
+ * Recovers jobs stuck in ENCODING or QUEUED for > 60 minutes
+ * (e.g. from an ungraceful server reboot or out-of-memory crash).
+ */
+async function recoverStuckTranscodingJobs() {
+  const sixtyMinutesAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+  const stuckAssets = await prisma.videoAsset.findMany({
+    where: {
+      status: { in: [VideoStatus.ENCODING, VideoStatus.QUEUED] },
+      updatedAt: { lt: sixtyMinutesAgo },
+    },
+  });
+
+  for (const asset of stuckAssets) {
+    if (asset.attempts >= MAX_TRANSCODE_ATTEMPTS) {
+      console.error(`💀 [Watchdog] Marking permanently stuck asset ${asset.id} as FAILED`);
+      await prisma.videoAsset.update({
+        where: { id: asset.id },
+        data: {
+          status: VideoStatus.FAILED,
+          errorMessage: "Transcoding timed out after exceeding retry limit.",
+        },
+      });
+    } else {
+      console.warn(`🩹 [Watchdog] Recovering stuck asset ${asset.id}, resetting to QUEUED`);
+      await prisma.videoAsset.update({
+        where: { id: asset.id },
+        data: {
+          status: VideoStatus.QUEUED,
+          errorMessage: `Watchdog recovered stuck transcode job (attempt ${asset.attempts + 1})`,
+        },
+      });
+    }
+  }
+}
+
 let isProcessing = false;
 
 export function initVideoBackgroundWorkers() {
+  // 1. Hourly cleanup of stalled S3 multipart uploads
   cron.schedule("0 * * * *", async () => {
     try {
-      await contentService.cleanupStaleUploads();
+      await abortStaleMultipartUploads();
     } catch (err) {
-      console.error("Error in stale upload cleanup job:", err);
+      console.error("Error in stale multipart upload cleanup job:", err);
     }
   });
 
+  // 2. Watchdog every 10 minutes for stuck jobs
+  cron.schedule("*/10 * * * *", async () => {
+    try {
+      await recoverStuckTranscodingJobs();
+    } catch (err) {
+      console.error("Error in stuck transcoding watchdog:", err);
+    }
+  });
+
+  // 3. Queue processor every 15 seconds
   cron.schedule("*/15 * * * * *", async () => {
     if (isProcessing) return;
 

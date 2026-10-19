@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 import { PasswordResetService } from "../services/passwordReset.service.js";
+import { MailerService } from "../services/mailer.service.js";
+import { env } from "../config/env.js";
 
 const resetService = new PasswordResetService();
+const mailerService = new MailerService();
 
 export class AuthResetController {
   async forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -11,13 +14,36 @@ export class AuthResetController {
         res.status(400).json({ status: "error", message: "Valid email is required" });
         return;
       }
-      const data = await resetService.requestOtp(email);
-      res.status(200).json({ status: "success", data });
-    } catch (err: any) {
-      if (err.message === "USER_NOT_FOUND") {
-        res.status(404).json({ status: "error", message: "No account found with this email" });
-        return;
+
+      const rawOtp = await resetService.generateAndSaveResetOtp(email);
+      let devOtp: string | undefined = undefined;
+
+      // Only attempt email dispatch if user was found
+      if (rawOtp) {
+        try {
+          const mailResult = await mailerService.sendOtp({
+            to: email,
+            otp: rawOtp,
+            type: "PASSWORD_RESET",
+          });
+          if (env.NODE_ENV === "development" && mailResult.devOtp) {
+            devOtp = mailResult.devOtp;
+          }
+        } catch (mailErr: any) {
+          console.warn("[MAILER ERROR] Failed to deliver password reset email:", mailErr.message);
+        }
       }
+
+      // Consistent 200 response regardless of user existence (prevents email enumeration)
+      res.status(200).json({
+        status: "success",
+        message: "If an account exists with that email, a verification code has been dispatched.",
+        data: {
+          email,
+          ...(devOtp && { devOtp }),
+        },
+      });
+    } catch (err: any) {
       next(err);
     }
   }
@@ -33,26 +59,6 @@ export class AuthResetController {
       await resetService.verifyOtpAndReset(email, otp, newPassword);
       res.status(200).json({ status: "success", message: "Password reset successfully. You can now login." });
     } catch (err: any) {
-      if (err.message === "NO_OTP_REQUESTED") {
-        res.status(400).json({ status: "error", message: "No OTP request found. Please request a new one." });
-        return;
-      }
-      if (err.message === "OTP_EXPIRED") {
-        res.status(400).json({ status: "error", message: "OTP has expired. Please request a new code." });
-        return;
-      }
-      if (err.message === "INVALID_OTP") {
-        res.status(400).json({ status: "error", message: "Invalid OTP code entered." });
-        return;
-      }
-      if (err.message === "MAX_ATTEMPTS_EXCEEDED") {
-        res.status(429).json({ status: "error", message: "Too many failed attempts. Please request a new OTP." });
-        return;
-      }
-      if (err.message === "PASSWORD_TOO_SHORT") {
-        res.status(400).json({ status: "error", message: "New password must be at least 6 characters" });
-        return;
-      }
       next(err);
     }
   }
@@ -70,14 +76,6 @@ export class AuthResetController {
       await resetService.updateCurrentPassword(userId, currentPassword, newPassword);
       res.status(200).json({ status: "success", message: "Password updated successfully" });
     } catch (err: any) {
-      if (err.message === "INCORRECT_CURRENT_PASSWORD") {
-        res.status(400).json({ status: "error", message: "Current password is incorrect" });
-        return;
-      }
-      if (err.message === "PASSWORD_TOO_SHORT") {
-        res.status(400).json({ status: "error", message: "Password must be at least 6 characters" });
-        return;
-      }
       next(err);
     }
   }

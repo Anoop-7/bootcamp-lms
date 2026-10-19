@@ -58,16 +58,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const heartbeatIntervalRef = useRef<any>(null);
   const seekSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Save progress immediately helper
+  // Send progress heartbeat
   const saveProgress = useCallback(async (timeSec: number) => {
-    if (!sessionTokenRef.current) return;
+    if (!sessionTokenRef.current || !Number.isFinite(timeSec) || timeSec < 0) return;
     try {
       await api.post(`/contents/${contentId}/heartbeat`, {
         watchedSeconds: Math.floor(timeSec),
         sessionToken: sessionTokenRef.current,
       });
     } catch {
-      // Ignore background heartbeat blips
+      // Background heartbeat failure handled silently
     }
   }, [contentId]);
 
@@ -81,11 +81,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => clearInterval(interval);
   }, []);
 
-  // Main stream initialization and video switching lifecycle
+  // Main stream initialization & cleanup lifecycle
   useEffect(() => {
     let isCancelled = false;
 
-    // 1. Immediately clean up previous session state & running timers
+    // 1. Teardown active timers and instances
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current);
       heartbeatIntervalRef.current = null;
@@ -102,7 +102,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const video = videoRef.current;
     if (video) {
-      // Save last watched second of old video before unmounting it
       if (sessionTokenRef.current && video.currentTime > 0) {
         saveProgress(video.currentTime);
       }
@@ -134,8 +133,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         // 3. Fetch last watched progress for Auto-Resume
         try {
           const progressRes = await api.get(`/contents/${contentId}/progress`);
-          if (!isCancelled && progressRes.data.data?.watchedSeconds) {
-            initialResumeTimeRef.current = progressRes.data.data.watchedSeconds;
+          if (!isCancelled && progressRes.data?.data) {
+            const savedSec = progressRes.data.data.watchedSeconds || 0;
+            initialResumeTimeRef.current = savedSec;
           }
         } catch {
           initialResumeTimeRef.current = 0;
@@ -161,6 +161,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             cookies["CloudFront-Signature"]
           )}`;
         }
+
+        // Apply resume time helper
+        const applyResumePosition = (vid: HTMLVideoElement) => {
+          if (!hasResumedRef.current && initialResumeTimeRef.current > 0) {
+            // If already completed or within 5 seconds of the end, start from 0
+            if (vid.duration && initialResumeTimeRef.current >= vid.duration - 5) {
+              vid.currentTime = 0;
+            } else {
+              vid.currentTime = initialResumeTimeRef.current;
+            }
+            hasResumedRef.current = true;
+          }
+        };
 
         // 4. Attach HLS.js or native playback
         if (url.includes(".m3u8")) {
@@ -197,10 +210,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               setQualities(availableQualities);
               setLoading(false);
 
-              if (!hasResumedRef.current && initialResumeTimeRef.current > 0) {
-                currentVideo.currentTime = initialResumeTimeRef.current;
-                hasResumedRef.current = true;
-              }
+              applyResumePosition(currentVideo);
 
               currentVideo.play().then(() => {
                 if (!isCancelled) setIsPlaying(true);
@@ -279,7 +289,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     } else {
       videoRef.current.pause();
       setIsPlaying(false);
-      // Immediately save progress on pause
       saveProgress(videoRef.current.currentTime);
     }
   };
@@ -290,7 +299,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     videoRef.current.currentTime = newTime;
     setCurrentTime(newTime);
 
-    // Save seeked position after debounce
     if (seekSaveTimeoutRef.current) clearTimeout(seekSaveTimeoutRef.current);
     seekSaveTimeoutRef.current = setTimeout(() => {
       saveProgress(newTime);
@@ -303,7 +311,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       videoRef.current.currentTime = targetTime;
       setCurrentTime(targetTime);
 
-      // Debounce saving scrubbed position
       if (seekSaveTimeoutRef.current) clearTimeout(seekSaveTimeoutRef.current);
       seekSaveTimeoutRef.current = setTimeout(() => {
         saveProgress(targetTime);
@@ -387,17 +394,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         onTimeUpdate={() => {
           if (!videoRef.current) return;
           setCurrentTime(videoRef.current.currentTime);
-
-          if (!hasResumedRef.current && initialResumeTimeRef.current > 0) {
-            videoRef.current.currentTime = initialResumeTimeRef.current;
-            hasResumedRef.current = true;
-          }
         }}
         onLoadedMetadata={() => {
           if (videoRef.current) {
             setDuration(videoRef.current.duration);
             if (!hasResumedRef.current && initialResumeTimeRef.current > 0) {
-              videoRef.current.currentTime = initialResumeTimeRef.current;
+              if (initialResumeTimeRef.current < videoRef.current.duration - 5) {
+                videoRef.current.currentTime = initialResumeTimeRef.current;
+              }
               hasResumedRef.current = true;
             }
           }

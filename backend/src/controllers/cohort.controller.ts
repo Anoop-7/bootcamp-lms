@@ -5,7 +5,6 @@ import prisma from "../config/db.js";
 const cohortService = new CohortService();
 
 export class CohortController {
-  // Public Explore Page (only published cohorts)
   async getCohorts(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const cohorts = await cohortService.getPublicCohorts();
@@ -15,13 +14,11 @@ export class CohortController {
     }
   }
 
-  // Dedicated to the logged-in Instructor or Admin
   async getInstructorCohorts(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const instructorId = req.user!.userId;
       const role = req.user!.role;
 
-      // Admins see all cohorts, while instructors strictly see their own
       const cohorts = await prisma.cohort.findMany({
         where: role === "ADMIN" ? {} : { instructorId },
         orderBy: { createdAt: "desc" },
@@ -70,9 +67,18 @@ export class CohortController {
   async updateCohort(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = req.params.id as string;
-      const updated = await cohortService.updateCohort(id, req.body);
+      const user = { userId: req.user!.userId, role: req.user!.role };
+      const updated = await cohortService.updateCohort(id, req.body, user);
       res.status(200).json({ status: "success", data: updated });
     } catch (err: any) {
+      if (err.message === "COHORT_NOT_FOUND") {
+        res.status(404).json({ status: "error", message: "Cohort not found" });
+        return;
+      }
+      if (err.message === "FORBIDDEN_COHORT_MANAGE") {
+        res.status(403).json({ status: "error", message: "You are not authorized to modify this cohort" });
+        return;
+      }
       next(err);
     }
   }
@@ -129,44 +135,48 @@ export class CohortController {
     }
   }
 
-  async enroll(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async startLive(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const cohortId = req.params.id as string;
-      const userId = req.user!.userId;
+      const id = req.params.id as string;
+      const { zoomUrl } = req.body;
+      const user = { userId: req.user!.userId, role: req.user!.role };
 
-      const enrollment = await cohortService.enrollUserInCohort(cohortId, userId);
-      res.status(201).json({ status: "success", data: enrollment });
+      const updated = await cohortService.startLiveSession(id, zoomUrl, user);
+      res.status(200).json({ status: "success", data: updated });
     } catch (err: any) {
       if (err.message === "COHORT_NOT_FOUND") {
-        res.status(404).json({ status: "error", message: "Cohort not found." });
+        res.status(404).json({ status: "error", message: "Cohort not found" });
+        return;
+      }
+      if (err.message === "FORBIDDEN_COHORT_MANAGE") {
+        res.status(403).json({ status: "error", message: "You are not authorized to start live sessions for this cohort" });
+        return;
+      }
+      if (err.message === "INVALID_LIVE_URL") {
+        res.status(400).json({ status: "error", message: "A valid https:// meeting URL is required" });
         return;
       }
       next(err);
     }
   }
 
-  async startLive(req: Request, res: Response): Promise<void> {
+  async endLive(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = req.params.id as string;
-      const { zoomUrl } = req.body;
-      if (!zoomUrl) {
-        res.status(400).json({ status: "error", message: "zoomUrl is required" });
+      const user = { userId: req.user!.userId, role: req.user!.role };
+
+      const updated = await cohortService.endLiveSession(id, user);
+      res.status(200).json({ status: "success", data: updated });
+    } catch (err: any) {
+      if (err.message === "COHORT_NOT_FOUND") {
+        res.status(404).json({ status: "error", message: "Cohort not found" });
         return;
       }
-      const updated = await cohortService.startLiveSession(id, zoomUrl);
-      res.status(200).json({ status: "success", data: updated });
-    } catch (err: any) {
-      res.status(500).json({ status: "error", message: err.message });
-    }
-  }
-
-  async endLive(req: Request, res: Response): Promise<void> {
-    try {
-      const id = req.params.id as string;
-      const updated = await cohortService.endLiveSession(id);
-      res.status(200).json({ status: "success", data: updated });
-    } catch (err: any) {
-      res.status(500).json({ status: "error", message: err.message });
+      if (err.message === "FORBIDDEN_COHORT_MANAGE") {
+        res.status(403).json({ status: "error", message: "You are not authorized to end live sessions for this cohort" });
+        return;
+      }
+      next(err);
     }
   }
 }

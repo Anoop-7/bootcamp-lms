@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { ProgressService } from "../services/progress.service.js";
+import { badRequest } from "../utils/httpError.js";
 
 const progressService = new ProgressService();
 
@@ -11,11 +12,7 @@ export class ProgressController {
       const { watchedSeconds, isCompleted } = req.body;
 
       if (watchedSeconds === undefined || typeof watchedSeconds !== "number") {
-        res.status(400).json({
-          status: "error",
-          message: "Field 'watchedSeconds' is required and must be a number",
-        });
-        return;
+        throw badRequest("Field 'watchedSeconds' is required and must be a number", "INVALID_INPUT");
       }
 
       const progress = await progressService.updateProgress({

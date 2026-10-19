@@ -2,9 +2,28 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import prisma from "../config/db.js";
 import { InviteStatus, Role } from "@prisma/client";
+import { env } from "../config/env.js";
+import {
+  badRequest,
+  unauthorized,
+  notFound,
+  conflict,
+  forbidden,
+} from "../utils/httpError.js";
+
+// Role hierarchy rank: Higher value means higher privileges
+const ROLE_HIERARCHY: Record<Role, number> = {
+  [Role.STUDENT]: 1,
+  [Role.INSTRUCTOR]: 2,
+  [Role.ADMIN]: 3,
+};
 
 export class InviteService {
-  async createInstructorInvite(email: string, adminId: string, role: Role = Role.INSTRUCTOR) {
+  async createInstructorInvite(
+    email: string,
+    adminId: string,
+    role: Role = Role.INSTRUCTOR
+  ) {
     const normalizedEmail = email.trim().toLowerCase();
 
     const existingUser = await prisma.user.findUnique({
@@ -13,10 +32,13 @@ export class InviteService {
 
     if (existingUser) {
       if (existingUser.role === role) {
-        throw new Error(`USER_ALREADY_${role}`);
+        throw conflict(`User is already an active ${role}.`, `USER_ALREADY_${role}`);
       }
       if (existingUser.role === Role.ADMIN && role !== Role.ADMIN) {
-        throw new Error("USER_IS_ADMIN");
+        throw badRequest(
+          "This email belongs to an existing platform administrator.",
+          "USER_IS_ADMIN"
+        );
       }
     }
 
@@ -53,9 +75,11 @@ export class InviteService {
       });
     }
 
-    const inviteUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/onboard/instructor?token=${token}`;
+    const inviteUrl = `${env.FRONTEND_URL}/onboard/instructor?token=${token}`;
 
-    console.log(`✉️  [ONBOARDING INVITE DISPATCHED (${role})]: ${normalizedEmail} -> ${inviteUrl}`);
+    if (env.NODE_ENV === "development") {
+      console.log(`✉️  [ONBOARDING INVITE DISPATCHED (${role})]: ${normalizedEmail} -> ${inviteUrl}`);
+    }
 
     return {
       inviteId: invite.id,
@@ -76,17 +100,25 @@ export class InviteService {
       },
     });
 
-    if (!invite) throw new Error("INVITE_NOT_FOUND");
-    if (invite.status === InviteStatus.REVOKED) throw new Error("INVITE_REVOKED");
-    if (invite.status === InviteStatus.ACCEPTED) throw new Error("INVITE_ALREADY_USED");
-    if (invite.status !== InviteStatus.PENDING) throw new Error("INVITE_INVALID");
+    if (!invite) {
+      throw notFound("Invalid invite token.", "INVITE_NOT_FOUND");
+    }
+    if (invite.status === InviteStatus.REVOKED) {
+      throw badRequest("This invite has been revoked by an administrator.", "INVITE_REVOKED");
+    }
+    if (invite.status === InviteStatus.ACCEPTED) {
+      throw badRequest("This invite has already been redeemed.", "INVITE_ALREADY_USED");
+    }
+    if (invite.status !== InviteStatus.PENDING) {
+      throw badRequest("Invalid invite state.", "INVITE_INVALID");
+    }
 
     if (new Date() > invite.expiresAt) {
       await prisma.instructorInvite.update({
         where: { id: invite.id },
         data: { status: InviteStatus.EXPIRED },
       });
-      throw new Error("INVITE_EXPIRED");
+      throw badRequest("This invite has expired. Please ask for a new link.", "INVITE_EXPIRED");
     }
 
     const existingUser = await prisma.user.findUnique({
@@ -105,19 +137,60 @@ export class InviteService {
   }
 
   async acceptInvite(token: string, name?: string, password?: string) {
+    // 1. Verify token existence and state
     const invite = await prisma.instructorInvite.findUnique({
       where: { token },
     });
 
-    if (!invite) throw new Error("INVITE_NOT_FOUND");
-    if (invite.status === InviteStatus.REVOKED) throw new Error("INVITE_REVOKED");
-    if (invite.status === InviteStatus.ACCEPTED) throw new Error("INVITE_ALREADY_USED");
-    if (new Date() > invite.expiresAt) throw new Error("INVITE_EXPIRED");
+    if (!invite) throw notFound("Invalid invite token.", "INVITE_NOT_FOUND");
+    if (invite.status === InviteStatus.REVOKED) {
+      throw badRequest("This invite has been revoked.", "INVITE_REVOKED");
+    }
+    if (invite.status === InviteStatus.ACCEPTED) {
+      throw badRequest("This invite has already been redeemed.", "INVITE_ALREADY_USED");
+    }
+    if (new Date() > invite.expiresAt) {
+      throw badRequest("This invite has expired.", "INVITE_EXPIRED");
+    }
 
+    // 2. Pre-transaction credential validation
     const existingUser = await prisma.user.findUnique({
       where: { email: invite.email },
     });
 
+    if (existingUser) {
+      if (!existingUser.password) {
+        throw badRequest(
+          "This account has no password set. Please use the forgot-password flow first.",
+          "PASSWORD_REQUIRED_RESET_FIRST"
+        );
+      }
+      if (!password) {
+        throw unauthorized(
+          "Current password is required to claim this invite for an existing account.",
+          "INVALID_CREDENTIALS"
+        );
+      }
+      const isValid = await bcrypt.compare(password, existingUser.password);
+      if (!isValid) {
+        throw unauthorized("Incorrect password for existing account.", "INVALID_CREDENTIALS");
+      }
+    } else {
+      if (!password || password.length < 6) {
+        throw badRequest("Password must be at least 6 characters.", "PASSWORD_TOO_SHORT");
+      }
+    }
+
+    // 3. Determine target role without downgrading
+    let targetRole = invite.role;
+    if (existingUser) {
+      const currentRank = ROLE_HIERARCHY[existingUser.role];
+      const inviteRank = ROLE_HIERARCHY[invite.role];
+      // Only elevate, never demote through invite
+      targetRole = inviteRank > currentRank ? invite.role : existingUser.role;
+    }
+
+    // 4. Atomic transaction to consume invite and update/create user
     return prisma.$transaction(async (tx) => {
       const updated = await tx.instructorInvite.updateMany({
         where: { id: invite.id, status: InviteStatus.PENDING },
@@ -128,35 +201,27 @@ export class InviteService {
       });
 
       if (updated.count === 0) {
-        throw new Error("INVITE_ALREADY_USED");
+        throw badRequest("This invite has already been redeemed.", "INVITE_ALREADY_USED");
       }
 
       let finalUser;
 
       if (existingUser) {
-        if (password) {
-          const isValid = await bcrypt.compare(password, existingUser.password!);
-          if (!isValid) throw new Error("INVALID_CREDENTIALS");
-        }
-
         finalUser = await tx.user.update({
           where: { id: existingUser.id },
-          data: { role: invite.role },
+          data: { role: targetRole },
           select: { id: true, name: true, email: true, role: true, createdAt: true },
         });
       } else {
-        if (!password || password.length < 6) {
-          throw new Error("PASSWORD_TOO_SHORT");
-        }
         const salt = await bcrypt.genSalt(10);
-        const passwordHash = await bcrypt.hash(password, salt);
+        const passwordHash = await bcrypt.hash(password!, salt);
 
         finalUser = await tx.user.create({
           data: {
             name: (name || (invite.role === Role.ADMIN ? "Administrator" : "Instructor")).trim(),
             email: invite.email,
             password: passwordHash,
-            role: invite.role,
+            role: targetRole,
           },
           select: { id: true, name: true, email: true, role: true, createdAt: true },
         });
@@ -170,9 +235,9 @@ export class InviteService {
     const invite = await prisma.instructorInvite.findUnique({
       where: { id: inviteId },
     });
-    if (!invite) throw new Error("INVITE_NOT_FOUND");
+    if (!invite) throw notFound("Invite not found.", "INVITE_NOT_FOUND");
     if (invite.status === InviteStatus.ACCEPTED) {
-      throw new Error("CANNOT_REVOKE_ACCEPTED_INVITE");
+      throw badRequest("Cannot revoke an invite that has already been accepted.", "CANNOT_REVOKE_ACCEPTED_INVITE");
     }
 
     return prisma.instructorInvite.update({
@@ -185,9 +250,9 @@ export class InviteService {
     const invite = await prisma.instructorInvite.findUnique({
       where: { id: inviteId },
     });
-    if (!invite) throw new Error("INVITE_NOT_FOUND");
+    if (!invite) throw notFound("Invite not found.", "INVITE_NOT_FOUND");
     if (invite.status === InviteStatus.ACCEPTED) {
-      throw new Error("INVITE_ALREADY_ACCEPTED");
+      throw badRequest("This candidate has already accepted their invite.", "INVITE_ALREADY_ACCEPTED");
     }
 
     const token = crypto.randomBytes(32).toString("hex");
@@ -203,9 +268,11 @@ export class InviteService {
       },
     });
 
-    const inviteUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/onboard/instructor?token=${token}`;
+    const inviteUrl = `${env.FRONTEND_URL}/onboard/instructor?token=${token}`;
 
-    console.log(`✉️  [INVITE RE-ARMED (${invite.role})]: ${invite.email} -> ${inviteUrl}`);
+    if (env.NODE_ENV === "development") {
+      console.log(`✉️  [INVITE RE-ARMED (${invite.role})]: ${invite.email} -> ${inviteUrl}`);
+    }
 
     return {
       inviteId: updated.id,
@@ -262,7 +329,7 @@ export class InviteService {
 
   async updateUserRole(targetUserId: string, newRole: Role, currentAdminId: string) {
     if (targetUserId === currentAdminId && newRole !== Role.ADMIN) {
-      throw new Error("CANNOT_DEMOTE_SELF");
+      throw forbidden("Security guard: You cannot demote your own administrator account.", "CANNOT_DEMOTE_SELF");
     }
 
     return prisma.user.update({
@@ -277,12 +344,12 @@ export class InviteService {
       where: { id: inviteId },
     });
 
-    if (!invite) throw new Error("INVITE_NOT_FOUND");
+    if (!invite) throw notFound("Invite not found.", "INVITE_NOT_FOUND");
     if (invite.status === InviteStatus.ACCEPTED) {
-      throw new Error("CANNOT_DELETE_ACCEPTED_INVITE");
+      throw badRequest("Cannot delete an accepted onboarding invite.", "CANNOT_DELETE_ACCEPTED_INVITE");
     }
     if (invite.status === InviteStatus.PENDING) {
-      throw new Error("REVOKE_BEFORE_DELETE");
+      throw badRequest("Please revoke the active invite before deleting it.", "REVOKE_BEFORE_DELETE");
     }
 
     return prisma.instructorInvite.delete({

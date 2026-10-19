@@ -56,17 +56,18 @@ enum InviteStatus {
 }
 
 model User {
-  id              String         @id @default(uuid())
-  email           String         @unique
-  password        String?
-  name            String
-  role            Role           @default(STUDENT)
-  avatar          String?
-  activeSessionToken String?        // Tracks active single-device playback session
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id                 String             @id @default(uuid())
+  email              String             @unique
+  password           String?
+  name               String
+  role               Role               @default(STUDENT)
+  avatar             String?
+  activeSessionToken String? // Tracks active single-device playback session
+  tokenVersion       Int                @default(0) // Invalidates stale JWTs on password/role change
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
-  cohortsTeaching Cohort[]       @relation("InstructorCohorts")
+  cohortsTeaching Cohort[]           @relation("InstructorCohorts")
   enrollments     Enrollment[]
   orders          Order[]
   watchProgress   WatchProgress[]
@@ -101,93 +102,102 @@ model InstructorInvite {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @default(now()) @updatedAt
 
-  @@index([token])
+  @@map("instructor_invites")
 }
 
 model Cohort {
-  id              String         @id @default(uuid())
-  title           String
-  slug            String         @unique
-  description     String
-  thumbnail       String?
-  price           Float          @default(0.0)
-  originalPrice   Float?         // Strike-through price (e.g., 4999)
-  validity        String?        // e.g. "3 years from date of purchase"
-  deliveryType    DeliveryType   @default(LIVE)
-  status          CohortStatus   @default(UPCOMING_LIVE)
-  startDate       DateTime?
-  endDate         DateTime?
-  discordUrl      String?
+  id             String       @id @default(uuid())
+  title          String
+  slug           String       @unique
+  description    String
+  thumbnail      String?
+  price          Float        @default(0.0)
+  originalPrice  Float? // Strike-through price (e.g., 4999)
+  validity       String? // e.g. "3 years from date of purchase"
+  deliveryType   DeliveryType @default(LIVE)
+  status         CohortStatus @default(UPCOMING_LIVE)
+  startDate      DateTime?
+  endDate        DateTime?
+  discordUrl     String?
 
-  isLiveActive    Boolean        @default(false)
-  currentLiveUrl  String?
+  isLiveActive   Boolean      @default(false)
+  currentLiveUrl String?
 
-  instructorId    String
-  instructor      User           @relation("InstructorCohorts", fields: [instructorId], references: [id], onDelete: Cascade)
+  instructorId String
+  instructor   User   @relation("InstructorCohorts", fields: [instructorId], references: [id], onDelete: Cascade)
 
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   folders         Folder[]
   enrollments     Enrollment[]
   orders          Order[]
   liveAttendances LiveAttendance[]
 
+  @@index([instructorId])
   @@map("cohorts")
 }
 
 model Folder {
-  id        String    @id @default(uuid())
-  title     String
-  order     Int       @default(0)
-  cohortId  String
-  cohort    Cohort    @relation(fields: [cohortId], references: [id], onDelete: Cascade)
-  contents  Content[]
+  id       String    @id @default(uuid())
+  title    String
+  order    Int       @default(0)
+  cohortId String
+  cohort   Cohort    @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  contents Content[]
 
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  @@index([cohortId])
   @@map("folders")
 }
 
 model VideoAsset {
   id             String      @id @default(uuid())
-  originalKey    String      // S3 key for original multipart upload
-  hlsManifestKey String?     // S3 key for transcoded HLS .m3u8 master manifest
-  posterKey      String?     // S3 key for thumbnail poster image
+  originalKey    String // S3 key for original multipart upload
+  uploadId       String? // S3 multipart upload ID for aborting stalled uploads
+  hlsManifestKey String? // S3 key for transcoded HLS .m3u8 master manifest
+  posterKey      String? // S3 key for thumbnail poster image
   durationSec    Int?        @default(0)
   status         VideoStatus @default(UPLOADING)
   errorMessage   String?
-  
-  contents       Content[]   // Decoupled relation: one video can be linked across multiple lectures
+  attempts       Int         @default(0) // Retry counter for crash resilience
+  startedAt      DateTime? // Timestamp when worker claimed encoding
+  uploadedById   String? // Ownership link to the uploader
 
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  contents Content[] // Decoupled relation: one video can be linked across multiple lectures
 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
   @@map("video_assets")
 }
 
 model Content {
-  id            String      @id @default(uuid())
-  title         String
-  type          ContentType
-  
+  id    String      @id @default(uuid())
+  title String
+  type  ContentType
+
   // Decoupled Video Asset Relation (replaces raw videoUrl string)
-  videoAssetId  String?
-  videoAsset    VideoAsset? @relation(fields: [videoAssetId], references: [id], onDelete: SetNull)
+  videoAssetId String?
+  videoAsset   VideoAsset? @relation(fields: [videoAssetId], references: [id], onDelete: SetNull)
 
-  resourceDoc   String?
-  durationSec   Int         @default(0)
-  order         Int         @default(0)
+  resourceDoc String?
+  durationSec Int     @default(0)
+  order       Int     @default(0)
 
-  folderId      String
-  folder        Folder      @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  folderId String
+  folder   Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
 
   watchProgress WatchProgress[]
 
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  @@index([folderId])
+  @@index([videoAssetId])
   @@map("contents")
 }
 
@@ -200,6 +210,7 @@ model Enrollment {
   enrolledAt DateTime @default(now())
 
   @@unique([userId, cohortId])
+  @@index([cohortId])
   @@map("enrollments")
 }
 
@@ -217,21 +228,25 @@ model Order {
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
+  @@index([userId])
+  @@index([cohortId])
   @@map("orders")
 }
 
 model WatchProgress {
-  id             String    @id @default(uuid())
-  userId         String
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  contentId      String
-  content        Content   @relation(fields: [contentId], references: [id], onDelete: Cascade)
-  watchedSeconds Int       @default(0)
-  isCompleted    Boolean   @default(false)
-  completedAt    DateTime?
-  updatedAt      DateTime  @updatedAt
+  id                String    @id @default(uuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contentId         String
+  content           Content   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  watchedSeconds    Int       @default(0)
+  maxWatchedSeconds Int       @default(0) // Monotonic highest watch marker
+  isCompleted       Boolean   @default(false)
+  completedAt       DateTime?
+  updatedAt         DateTime  @updatedAt
 
   @@unique([userId, contentId])
+  @@index([contentId])
   @@map("watch_progress")
 }
 
@@ -243,5 +258,6 @@ model LiveAttendance {
   cohort   Cohort   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
   joinedAt DateTime @default(now())
 
+  @@index([cohortId, joinedAt])
   @@map("live_attendances")
 }
