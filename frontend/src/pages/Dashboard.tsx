@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { PlayCircle, Radio, BookOpen, AlertCircle, UserCheck } from "lucide-react";
 
+
 interface EnrolledCohort {
   id: string;
   userId: string;
@@ -133,16 +134,14 @@ export const Dashboard: React.FC = () => {
 
                 <div className="space-y-3">
                   {cohort.isLiveActive && (
-                    <a
-                      href={`http://localhost:5000/api/v1/cohorts/${cohort.id}/join-live`}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <Link
+                      to={`/cohorts/${cohort.id}/join-live`}
                       onClick={(e) => e.stopPropagation()}
                       className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-red-600 hover:bg-red-500 text-white font-semibold text-sm rounded-lg transition-colors shadow-sm"
                     >
                       <Radio className="w-4 h-4" />
-                      Join Live Lecture
-                    </a>
+                      <span>Join Live Lecture</span>
+                    </Link>
                   )}
 
                   <div className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-neutral-800 group-hover:bg-neutral-700 text-white font-medium text-sm rounded-lg transition-colors border border-neutral-700">

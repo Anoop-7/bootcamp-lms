@@ -11,6 +11,20 @@ import {
   Loader2,
 } from "lucide-react";
 
+interface ApiErrorShape {
+  message?: string;
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  const err = error as ApiErrorShape;
+  return err.response?.data?.message || err.message || fallback;
+}
+
 export const Login: React.FC = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -48,8 +62,8 @@ export const Login: React.FC = () => {
       } else {
         navigate("/dashboard");
       }
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || "Failed to log in. Please verify your credentials.");
+    } catch (err: unknown) {
+      setErrorMsg(getErrorMessage(err, "Failed to log in. Please verify your credentials."));
     } finally {
       setIsSubmitting(false);
     }
@@ -69,8 +83,8 @@ export const Login: React.FC = () => {
         setDevOtp(res.data.data.devOtp);
       }
       setResetStep("VERIFY");
-    } catch (err: any) {
-      setResetError(err.response?.data?.message || "Failed to dispatch OTP");
+    } catch (err: unknown) {
+      setResetError(getErrorMessage(err, "Failed to dispatch OTP"));
     } finally {
       setIsResetLoading(false);
     }
@@ -94,8 +108,8 @@ export const Login: React.FC = () => {
       setOtpCode("");
       setNewPassword("");
       setDevOtp(null);
-    } catch (err: any) {
-      setResetError(err.response?.data?.message || "Verification failed");
+    } catch (err: unknown) {
+      setResetError(getErrorMessage(err, "Verification failed"));
     } finally {
       setIsResetLoading(false);
     }

@@ -1,193 +1,215 @@
-# Bootcamp 1.0 — Enterprise Cohort-Based LMS Engine
+# Bootcamp Platform
 
-> A production-grade learning management platform engine built with Node.js, Express, TypeScript, PostgreSQL (Neon), and AWS S3. Built around developer cohort workflows—featuring live session orchestration, gated curricula, secure pre-signed video pipelines, role-based access control, and an administrative onboarding ledger.
-
----
-
-## 🤖 Development Process
-
-This project was built adopting modern **AI-assisted engineering workflows**. 
-
-* **Human-Led Architecture:** All architectural decisions—including domain modeling (Prisma), the Controller-Service-Repository pattern, S3 presigned security constraints, and RBAC policies—were directed and verified manually.
-* **Accelerated Delivery:** AI tooling was utilized as an intelligent thought partner for rapid scaffolding, documentation generation, and accelerating repetitive boilerplate.
-* **Rigorous Verification:** Every endpoint, database migration, and frontend UX flow underwent manual integration testing and edge-case audits.
+A full-stack, cohort-based learning management and video streaming platform built with TypeScript, Node.js, Express 5, React 19, and PostgreSQL (via Prisma ORM). Engineered with strict security hardening, signed CloudFront HLS content delivery, server-evaluated progress tracking, and simulated payment checkout via Razorpay Test Mode.
 
 ---
 
-## 🏗 Repository Layout
+## Technical Stack
 
-```text
-Bootcamp 1.0/
-├── backend/            # Express 5, Prisma ORM, Neon PostgreSQL adapter, AWS S3 SDK
-│   ├── prisma/         # Relational schema migrations and database configurations
-│   ├── src/
-│   │   ├── controllers/# HTTP transport orchestration & input sanitation
-│   │   ├── middlewares/# JWT authentication, RBAC authorization, rate limiting
-│   │   ├── repositories/# Prisma data access & query abstractions
-│   │   ├── routes/     # Clean Express v5 API routes
-│   │   ├── services/   # Business logic, S3 pre-signing, OTP & token generation
-│   │   ├── workers/    # Background video ingestion & processing routines
-│   │   ├── app.ts      # Express application setup & middleware assembly
-│   │   └── server.ts   # HTTP listener bootstrap & graceful shutdown hooks
-│   ├── .env.example
-│   ├── package.json
-│   └── tsconfig.json
-├── frontend/           # React 19, Vite, Tailwind CSS v4, TanStack Query
-│   ├── src/
-│   │   ├── components/ # VideoPlayer, Navbar, ProtectedRoute, PublicRoute
-│   │   ├── context/    # Global authentication & token context provider
-│   │   ├── lib/        # Axios API client with automatic bearer interceptors
-│   │   ├── pages/      # Dashboard, CoursePlayer, InstructorHub, AdminDashboard, JoinLive
-│   │   ├── App.tsx     # Client-side router and role-based guards
-│   │   └── main.tsx    # React root entry point
-│   ├── package.json
-│   └── vite.config.ts
-├── docs/               # Technical specifications & system architecture
-│   ├── architecture.md # Design patterns, data pipelines, and security mechanisms
-│   └── api-specs.md    # REST API endpoints, schemas, and status codes
-└── README.md           # Engineering overview & local setup guide
+| Layer | Technology |
+| :--- | :--- |
+| **Frontend** | React 19, Vite, TypeScript, Tailwind CSS, TanStack Query, Lucide Icons |
+| **Backend** | Node.js 20+, Express 5, TypeScript |
+| **Database & ORM** | PostgreSQL (Neon / Local), Prisma ORM |
+| **Video Streaming** | AWS S3 (Multipart Uploads), CloudFront (Signed Cookies, HLS Adaptive Bitrate) |
+| **Payments** | Razorpay Gateway (Test Mode / Sandbox) |
+| **Security & Quality**| JWT Auth, Bcrypt, Token Versioning, Helmet, Rate Limiting, ESLint, GitHub Actions CI |
+
+---
+
+## Core System Architecture & Features
+
+### 1. Authentication & Session Integrity
+- **Role-Based Access Control (RBAC):** Distinct workflows and access layers for `STUDENT`, `INSTRUCTOR`, and `ADMIN`.
+- **Token Versioning (`tokenVersion`):** Centralized JWT session revocation. Changing or resetting passwords atomically increments the user's version counter, invalidating stale tokens across existing sessions.
+- **Cryptographic OTP Flows:** 6-digit verification codes generated with CSPRNG (`crypto.randomInt`) with SHA-256 hash storage and strict expiration windows for registration and account recovery.
+- **Invite-Only Instructor Onboarding:** Admins issue cryptographic, time-limited invitation tokens. Accounts are provisioned without public registration vectors or database seeding.
+
+### 2. Video Pipeline & Secure HLS Streaming
+- **S3 Multipart Upload Pipeline:** Instructors upload lecture videos directly in multi-part chunks via pre-signed S3 URLs, bypassing web-tier bottlenecking.
+- **Path-Scoped CloudFront Signed Cookies:** Media traffic is delivered over AWS CloudFront. Access requests generate `CloudFront-Policy`, `CloudFront-Signature`, and `CloudFront-Key-Pair-Id` HTTP-only cookies restricted to the specific lecture HLS directory (`/hls/<asset-id>/*`) with a 2-hour TTL.
+- **Adaptive Bitrate (ABR) Playback:** Custom HLS video player with auto-resolution switching, variable playback speeds, dynamic anti-piracy watermarking, and auto-resume.
+
+### 3. Server-Side Heartbeat & Progress Evaluation
+- **Anti-Tampering Watch Tracking:** Course completion cannot be claimed via client assertions. Monotonic watch progress updates via periodic heartbeats (`POST /contents/:id/heartbeat`).
+- **Enrollment & Threshold Verification:** Completion markers (`isCompleted`) are strictly calculated on the server when validated watch time crosses 90% of duration, guarded by active session validation and cohort enrollment checks.
+
+### 4. Commerce & Order Verification
+- **Razorpay Test Mode Integration:** Built-in checkout flow supporting test cards, dummy Netbanking, and mock UPI handles.
+- **Cryptographic Callback Verification:** Orders are generated on the server with amounts stored in paise. Client-side payment callbacks verify signatures using HMAC SHA-256 before committing atomic enrollment and order transitions.
+
+---
+
+## Architectural Pattern
+
+The backend follows an explicit Controller-Service-Repository pattern:
+
+```
+                      ┌────────────────────────────┐
+                      │    Incoming HTTP Request   │
+                      └──────────────┬─────────────┘
+                                     │
+                 [ Helmet / CORS / RateLimiter / Auth JWT ]
+                                     │
+                                     ▼
+                      ┌────────────────────────────┐
+                      │        Controllers         │
+                      │  (Input Validation & DTO)  │
+                      └──────────────┬─────────────┘
+                                     │
+                                     ▼
+                      ┌────────────────────────────┐
+                      │          Services          │
+                      │ (Business Rules & Signing) │
+                      └──────┬──────────────┬──────┘
+                             │              │
+              ┌──────────────┘              └──────────────┐
+              ▼                                            ▼
+   ┌───────────────────────┐                    ┌───────────────────────┐
+   │     Repositories      │                    │ External Integrations │
+   │  (Prisma ORM Queries) │                    │ (S3 / CloudFront/ RZP)│
+   └──────────┬────────────┘                    └───────────────────────┘
+              ▼
+   ┌───────────────────────┐
+   │  PostgreSQL Database  │
+   └───────────────────────┘
 ```
 
 ---
 
-## ⚡ Tech Stack & Core Infrastructure
+## Repository Structure
 
-### Backend
-* **Runtime:** Node.js (NodeNext ESM)
-* **Language:** TypeScript 5+ (Strict)
-* **Framework:** Express 5 (Native asynchronous error propagation)
-* **ORM:** Prisma 7 with `@prisma/adapter-pg`
-* **Database:** PostgreSQL (Neon Serverless with pooled connection endpoints)
-* **Storage:** AWS S3 (`ap-south-1`) for private media storage and short-lived pre-signed URLs
-* **Security:** JWT (Stateless authentication) & Bcrypt (Password hashing)
-
-### Frontend
-* **UI Framework:** React 19 (TypeScript)
-* **Tooling:** Vite
-* **Styling:** Tailwind CSS v4
-* **State & Data Fetching:** TanStack React Query (v5)
-* **Icons:** Lucide React
-
----
-
-## 🚀 Key Platform Features
-
-1. **Role-Based Navigation & Access Control:**
-   * Automated post-login redirection based on user role (`/admin` for Admins, `/instructor` for Instructors, `/dashboard` for Students).
-   * Minimalist header navigation with user profile menu and role-aware workspace shortcuts.
-
-2. **Privileged Onboarding System:**
-   * Administrative invitation ledger generating signed, time-limited tokens (48-hour expiration) for onboarding new instructors.
-   * Eliminates open instructor registrations while avoiding manual database seeding.
-
-3. **Secure Video Delivery Pipeline:**
-   * Direct media streaming from private AWS S3 storage via short-lived pre-signed URLs (15-minute expiration).
-   * Verifies enrollment before generating streaming signatures, keeping video delivery independent of application server compute.
-
-4. **Live Class Gateway & Attendance Auditing:**
-   * Instructors launch live broadcast sessions (Zoom, Google Meet, etc.) directly from the Instructor Hub.
-   * Active live sessions display a pulsing notification banner across enrolled students' course dashboards.
-   * The `/cohorts/:id/join-live` gateway verifies enrollment, records an entry in `live_attendances`, and opens the meeting in a new tab.
-
-5. **Self-Service Authentication Workflows:**
-   * Complete password reset flow utilizing 6-digit numeric OTPs with 15-minute expiration windows.
-   * In-app user profile updates and credential changes.
-
-6. **Interactive Course Player:**
-   * Cinema-mode video player with progress tracking, module accordions, lesson search, and playback position memory.
-
----
-
-## 📐 System Architecture Overview
-
-The backend strictly implements the **Controller-Service-Repository (CSR)** pattern:
-
-```text
-[ Client / Browser ]
-        │
-  (HTTP Request)
-        ▼
-┌──────────────────────────────────────────────┐
-│ Express Router                               │
-└──────┬───────────────────────────────────────┘
-       │
-       ▼
-┌──────────────────────────────────────────────┐
-│ Middlewares (JWT Bearer Auth, RBAC Checks)   │
-└──────┬───────────────────────────────────────┘
-       │
-       ▼
-┌──────────────────────────────────────────────┐
-│ Controllers (Payload extraction & DTOs)      │
-└──────┬───────────────────────────────────────┘
-       │
-       ▼
-┌──────────────────────────────────────────────┐
-│ Services (Domain logic & S3 signing rules)   │
-└──────┬───────────────────────────────────────┘
-       │
-       ▼
-┌──────────────────────────────────────────────┐
-│ Repositories (Prisma Client & SQL queries)   │
-└──────┬───────────────────────────────────────┘
-       │
-       ▼
-[ Neon PostgreSQL Pool ] & [ AWS S3 Asset Bucket ]
+```
+├── .github/
+│   └── workflows/
+│       └── ci.yml               # Automated TypeScript typecheck, ESLint, and build pipeline
+├── backend/
+│   ├── prisma/
+│   │   └── schema.prisma        # Database models & relationships
+│   ├── src/
+│   │   ├── config/              # S3, CloudFront signer, database, and env validation
+│   │   ├── controllers/         # HTTP request handlers
+│   │   ├── middlewares/         # JWT auth, RBAC, error handler, rate limiters
+│   │   ├── repositories/        # Database access layer
+│   │   ├── routes/              # Route definitions
+│   │   ├── services/            # Core business & payment verification logic
+│   │   ├── app.ts               # Express application configuration
+│   │   └── server.ts            # Entry point & graceful shutdown hooks
+│   └── .env.example
+├── frontend/
+│   ├── src/
+│   │   ├── components/          # VideoPlayer, Navbar, protected route wrappers
+│   │   ├── context/             # AuthContext with persistent session state
+│   │   ├── lib/                 # Axios HTTP client configuration
+│   │   ├── pages/               # CoursePlayer, CohortDetail, InstructorHub, AdminDashboard
+│   │   └── utils/               # Multipart chunking & upload utilities
+│   └── .env.example
+├── LICENSE                      # MIT License
+└── README.md
 ```
 
-* Complete architectural decisions are documented in [`docs/architecture.md`](docs/architecture.md).
-* Complete API schemas and status codes are documented in [`docs/api-specs.md`](docs/api-specs.md).
+---
+
+## Getting Started
+
+### Prerequisites
+- **Node.js**: v20.x or higher
+- **PostgreSQL**: Local instance or hosted database (e.g., Neon)
+- **AWS Account**: S3 bucket & CloudFront key pair (optional for local mock testing)
+- **Razorpay Account**: API Test Key & Secret
 
 ---
 
-## 🛠 Getting Started
+### Backend Setup
 
-### 1. Prerequisites
-* **Node.js** >= 20.x
-* **npm** >= 10.x
-* A **Neon PostgreSQL** database instance
-* An **AWS S3** bucket with programmatic IAM credentials
-
-### 2. Backend Setup
-1. Navigate to the backend directory:
+1. **Navigate to the backend directory and install dependencies:**
    ```bash
    cd backend
-   ```
-2. Configure `.env`:
-   ```env
-   PORT=5000
-   DATABASE_URL="postgresql://<user>:<password>@<neon-pooler-endpoint>/neondb?sslmode=require"
-   JWT_SECRET="your-ultra-secure-jwt-secret-string"
-
-   # AWS S3 Storage
-   AWS_REGION="ap-south-1"
-   AWS_ACCESS_KEY_ID="AKIA..."
-   AWS_SECRET_ACCESS_KEY="..."
-   AWS_S3_BUCKET="bootcamp-lms-assets-anoop"
-   ```
-3. Install dependencies and synchronize schema:
-   ```bash
    npm install
+   ```
+
+2. **Configure environment variables:**
+   ```bash
+   cp .env.example .env
+   ```
+   Fill in the required configuration:
+   ```env
+   NODE_ENV=development
+   PORT=5000
+   DATABASE_URL="postgresql://user:password@localhost:5432/bootcamp?schema=public"
+   JWT_SECRET="your-secure-32-char-random-jwt-secret"
+
+   # S3 & CloudFront (HLS Streaming)
+   AWS_REGION="ap-south-1"
+   AWS_S3_BUCKET="your-s3-bucket"
+   AWS_ACCESS_KEY_ID="your-access-key-id"
+   AWS_SECRET_ACCESS_KEY="your-secret-access-key"
+   CLOUDFRONT_DOMAIN="https://dxxxxxxxxxxxx.cloudfront.net"
+   CLOUDFRONT_KEY_PAIR_ID="KXXXXXXXXXXXXX"
+   CLOUDFRONT_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
+
+   # Payments
+   PAYMENTS_MODE=razorpay
+   RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxxxx
+   RAZORPAY_KEY_SECRET=your_razorpay_secret
+   ```
+
+3. **Initialize the database:**
+   ```bash
    npx prisma db push
    npx prisma generate
    ```
-4. Start the backend development server:
+
+4. **Start the API server:**
    ```bash
    npm run dev
+   ```
+   The backend API will run on `http://localhost:5000`.
+
+---
+
+### Frontend Setup
+
+1. **Navigate to the frontend directory and install dependencies:**
+   ```bash
+   cd ../frontend
+   npm install
    ```
 
-### 3. Frontend Setup
-1. Navigate to the frontend directory:
+2. **Configure environment variables:**
    ```bash
-   cd frontend
+   cp .env.example .env
    ```
-2. Configure `.env`:
+   Ensure the API endpoint is configured:
    ```env
-   VITE_API_URL="http://localhost:5000/api/v1"
+   VITE_API_BASE_URL=http://localhost:5000/api/v1
    ```
-3. Install dependencies and start Vite:
+
+3. **Start the Vite development server:**
    ```bash
-   npm install
    npm run dev
    ```
-4. Access the web client at `http://localhost:5173`.
+   The client application will run on `http://localhost:5173`.
+
+---
+
+## Quality & Verification
+
+The codebase runs strict typechecks and ESLint rules:
+
+```bash
+# In backend/
+npx tsc --noEmit
+
+# In frontend/
+npm run lint
+npm run build
+```
+
+Every push and pull request to `main` triggers `.github/workflows/ci.yml` to ensure no linting warnings, typing violations, or broken builds enter the mainline.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

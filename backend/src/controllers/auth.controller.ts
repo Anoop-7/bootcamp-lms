@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction } from "express";
+import crypto from "crypto";
 import { AuthService } from "../services/auth.service.js";
 import { InviteService } from "../services/invite.service.js";
 import { MailerService } from "../services/mailer.service.js";
+import { env } from "../config/env.js";
+import { badRequest, conflict } from "../utils/httpError.js";
 
 const authService = new AuthService();
 const inviteService = new InviteService();
@@ -12,33 +15,33 @@ export class AuthController {
     try {
       const { email, password, name } = req.body;
       if (!email || !name || !password) {
-        res.status(400).json({ status: "error", message: "Name, email, and password are required" });
-        return;
+        throw badRequest("Name, email, and password are required", "MISSING_REQUIRED_FIELDS");
       }
-      if (password.length < 6) {
-        res.status(400).json({ status: "error", message: "Password must be at least 6 characters" });
-        return;
+      if (password.length < 8) {
+        throw badRequest("Password must be at least 8 characters", "PASSWORD_TOO_SHORT");
       }
 
       const existing = await authService.findByEmail(email);
       if (existing) {
-        res.status(409).json({ status: "error", message: "Email is already registered" });
-        return;
+        throw conflict("Email is already registered", "EMAIL_ALREADY_EXISTS");
       }
 
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      // Cryptographically secure 6-digit OTP
+      const otp = crypto.randomInt(100000, 1000000).toString();
       await authService.storeRegistrationOtp(email, otp);
 
       const mailResult = await mailerService.sendOtp({ to: email, otp, type: "SIGNUP" });
+
+      const isDev = env.NODE_ENV === "development";
 
       res.status(200).json({
         status: "success",
         message: mailResult.delivered
           ? "Verification code sent to your email."
-          : "Verification code generated (development fallback active).",
+          : "Verification code generated.",
         data: {
           email,
-          ...(mailResult.devOtp && { devOtp: mailResult.devOtp }),
+          ...(isDev && mailResult.devOtp && { devOtp: mailResult.devOtp }),
         },
       });
     } catch (err: any) {
@@ -50,8 +53,7 @@ export class AuthController {
     try {
       const { email, otp, password, name } = req.body;
       if (!email || !otp || !password || !name) {
-        res.status(400).json({ status: "error", message: "All registration fields and OTP are required" });
-        return;
+        throw badRequest("All registration fields and OTP are required", "MISSING_FIELDS");
       }
 
       await authService.verifyRegistrationOtp(email, otp);
@@ -59,18 +61,6 @@ export class AuthController {
 
       res.status(201).json({ status: "success", data: result });
     } catch (err: any) {
-      if (err.message === "INVALID_OTP") {
-        res.status(400).json({ status: "error", message: "Invalid or expired verification code" });
-        return;
-      }
-      if (err.message === "USER_ALREADY_EXISTS") {
-        res.status(409).json({ status: "error", message: "Email is already registered" });
-        return;
-      }
-      if (err.message === "PASSWORD_TOO_SHORT") {
-        res.status(400).json({ status: "error", message: "Password must be at least 6 characters" });
-        return;
-      }
       next(err);
     }
   }
@@ -79,17 +69,12 @@ export class AuthController {
     try {
       const { email, password } = req.body;
       if (!email || !password) {
-        res.status(400).json({ status: "error", message: "Email and password are required" });
-        return;
+        throw badRequest("Email and password are required", "MISSING_CREDENTIALS");
       }
 
       const result = await authService.login(email, password);
       res.status(200).json({ status: "success", data: result });
     } catch (err: any) {
-      if (err.message === "INVALID_CREDENTIALS") {
-        res.status(401).json({ status: "error", message: "Invalid email or password" });
-        return;
-      }
       next(err);
     }
   }
@@ -100,10 +85,6 @@ export class AuthController {
       const user = await authService.getCurrentUser(userId);
       res.status(200).json({ status: "success", data: user });
     } catch (err: any) {
-      if (err.message === "USER_NOT_FOUND") {
-        res.status(404).json({ status: "error", message: "User not found" });
-        return;
-      }
       next(err);
     }
   }
@@ -112,8 +93,7 @@ export class AuthController {
     try {
       const { token } = req.params;
       if (!token) {
-        res.status(400).json({ status: "error", message: "Invite token is required" });
-        return;
+        throw badRequest("Invite token is required", "MISSING_INVITE_TOKEN");
       }
 
       const details = await inviteService.verifyInviteToken(token as string);
@@ -127,12 +107,12 @@ export class AuthController {
     try {
       const { token, name, password } = req.body;
       if (!token) {
-        res.status(400).json({ status: "error", message: "Invite token is required" });
-        return;
+        throw badRequest("Invite token is required", "MISSING_INVITE_TOKEN");
       }
 
       const user = await inviteService.acceptInvite(token, name, password);
-      const authToken = authService.generateToken(user.id, user.role);
+      // Issue token with the created user's actual tokenVersion
+      const authToken = authService.generateToken(user.id, user.role, (user as any).tokenVersion ?? 0);
 
       res.status(200).json({
         status: "success",

@@ -15,12 +15,78 @@ import {
   CreditCard,
 } from "lucide-react";
 
+interface ContentItem {
+  id: string;
+  title: string;
+}
+
+interface CurriculumFolder {
+  id: string;
+  title: string;
+  contents?: ContentItem[];
+}
+
+interface ApiErrorShape {
+  response?: {
+    status?: number;
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+interface RazorpayResponse {
+  razorpay_payment_id: string;
+  razorpay_order_id: string;
+  razorpay_signature: string;
+}
+
+interface RazorpayOptions {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  handler: (response: RazorpayResponse) => void;
+  prefill?: {
+    name?: string;
+    email?: string;
+  };
+  theme?: {
+    color?: string;
+  };
+}
+
+declare global {
+  interface Window {
+    Razorpay: new (options: RazorpayOptions) => {
+      open: () => void;
+    };
+  }
+}
+
+function loadRazorpayScript(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
 export const CohortDetail: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
   const { user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   const { data: cohort, isLoading, error } = useQuery({
     queryKey: ["cohort-detail", slug],
@@ -31,7 +97,7 @@ export const CohortDetail: React.FC = () => {
     enabled: !!slug,
   });
 
-  const enrollMutation = useMutation({
+  const freeEnrollMutation = useMutation({
     mutationFn: async (cohortId: string) => {
       const res = await api.post(`/cohorts/${cohortId}/enroll`);
       return res.data.data;
@@ -41,24 +107,84 @@ export const CohortDetail: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["cohort-detail", slug] });
       queryClient.invalidateQueries({ queryKey: ["cohort-curriculum", cohort.id] });
       queryClient.invalidateQueries({ queryKey: ["my-enrollments"] });
-
-      // Navigate to classroom player
       navigate(`/cohorts/${cohort.id}/learn`);
     },
-    onError: (err: any) => {
-      const status = err.response?.status;
+    onError: (err: unknown) => {
+      const apiErr = err as ApiErrorShape;
+      const status = apiErr.response?.status;
       if (status === 409 && cohort) {
         queryClient.invalidateQueries({ queryKey: ["cohort-curriculum", cohort.id] });
         navigate(`/cohorts/${cohort.id}/learn`);
-      } else if (status === 402) {
-        setEnrollError("This is a premium cohort. Please proceed to checkout to complete your enrollment.");
       } else {
-        setEnrollError(err.response?.data?.message || "Failed to complete enrollment");
+        setEnrollError(apiErr.response?.data?.message || "Failed to complete enrollment");
       }
     },
   });
 
-  // Access & Ownership Evaluation
+  const handlePaidCheckout = async () => {
+    if (!cohort) return;
+    setEnrollError(null);
+    setIsProcessingPayment(true);
+
+    try {
+      const loaded = await loadRazorpayScript();
+      if (!loaded) {
+        setEnrollError("Failed to load Razorpay payment gateway. Please check your connection.");
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      // 1. Create order on backend
+      const res = await api.post("/payments/orders", { cohortId: cohort.id });
+      const { orderId, amount, currency, keyId, cohortTitle } = res.data.data;
+
+      // 2. Open Razorpay Modal
+      const options: RazorpayOptions = {
+        key: keyId,
+        amount,
+        currency,
+        name: "Bootcamp Platform",
+        description: cohortTitle,
+        order_id: orderId,
+        handler: async (paymentResponse: RazorpayResponse) => {
+          try {
+            // 3. Verify signature on backend
+            await api.post("/payments/verify", {
+              cohortId: cohort.id,
+              razorpayOrderId: paymentResponse.razorpay_order_id,
+              razorpayPaymentId: paymentResponse.razorpay_payment_id,
+              razorpaySignature: paymentResponse.razorpay_signature,
+            });
+
+            queryClient.invalidateQueries({ queryKey: ["cohort-detail", slug] });
+            queryClient.invalidateQueries({ queryKey: ["cohort-curriculum", cohort.id] });
+            queryClient.invalidateQueries({ queryKey: ["my-enrollments"] });
+            navigate(`/cohorts/${cohort.id}/learn`);
+          } catch (verifyErr: unknown) {
+            const apiErr = verifyErr as ApiErrorShape;
+            setEnrollError(apiErr.response?.data?.message || "Payment signature verification failed.");
+          } finally {
+            setIsProcessingPayment(false);
+          }
+        },
+        prefill: {
+          name: user?.name,
+          email: user?.email,
+        },
+        theme: {
+          color: "#4f46e5",
+        },
+      };
+
+      const razorpayInstance = new window.Razorpay(options);
+      razorpayInstance.open();
+    } catch (err: unknown) {
+      const apiErr = err as ApiErrorShape;
+      setEnrollError(apiErr.response?.data?.message || "Could not initialize checkout.");
+      setIsProcessingPayment(false);
+    }
+  };
+
   const isOwner = Boolean(user && cohort && cohort.instructorId === user.id);
   const isAdmin = user?.role === "ADMIN";
   const isEnrolled = Boolean(cohort?.isEnrolled);
@@ -74,9 +200,11 @@ export const CohortDetail: React.FC = () => {
       navigate(`/cohorts/${cohort?.id}/learn`);
       return;
     }
-    if (cohort) {
+    if (isPaidCohort) {
+      handlePaidCheckout();
+    } else if (cohort) {
       setEnrollError(null);
-      enrollMutation.mutate(cohort.id);
+      freeEnrollMutation.mutate(cohort.id);
     }
   };
 
@@ -108,6 +236,8 @@ export const CohortDetail: React.FC = () => {
         currency: "INR",
         maximumFractionDigits: 0,
       });
+
+  const isBusy = freeEnrollMutation.isPending || isProcessingPayment;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -152,7 +282,7 @@ export const CohortDetail: React.FC = () => {
             <h2 className="text-xl font-bold text-white mb-4">Curriculum Breakdown</h2>
             <div className="border border-neutral-800 rounded-2xl overflow-hidden divide-y divide-neutral-800/80 bg-neutral-900/40">
               {cohort.folders && cohort.folders.length > 0 ? (
-                cohort.folders.map((folder: any) => (
+                cohort.folders.map((folder: CurriculumFolder) => (
                   <div key={folder.id} className="p-5">
                     <div className="flex items-center gap-2 font-semibold text-sm text-neutral-200 mb-3">
                       <FolderIcon className="w-4 h-4 text-indigo-400" />
@@ -160,7 +290,7 @@ export const CohortDetail: React.FC = () => {
                     </div>
 
                     <div className="space-y-2 pl-6">
-                      {folder.contents?.map((c: any) => (
+                      {folder.contents?.map((c: ContentItem) => (
                         <div key={c.id} className="flex items-center justify-between text-xs text-neutral-400 py-1.5">
                           <div className="flex items-center gap-2 truncate">
                             <PlayCircle className="w-3.5 h-3.5 text-neutral-500" />
@@ -217,10 +347,10 @@ export const CohortDetail: React.FC = () => {
               ) : (
                 <button
                   onClick={handleEnrollClick}
-                  disabled={enrollMutation.isPending}
+                  disabled={isBusy}
                   className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-sm rounded-xl transition-colors shadow-sm cursor-pointer"
                 >
-                  {enrollMutation.isPending ? (
+                  {isBusy ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : isPaidCohort ? (
                     <>

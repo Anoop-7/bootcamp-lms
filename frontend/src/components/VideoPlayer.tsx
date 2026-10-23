@@ -21,6 +21,15 @@ interface VideoPlayerProps {
   onEnded?: () => void;
 }
 
+interface ApiErrorShape {
+  message?: string;
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   contentId,
   onEnded,
@@ -42,23 +51,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // ABR Quality States
   const [qualities, setQualities] = useState<{ id: number; height: number; bitrate: number }[]>([]);
-  const [currentQuality, setCurrentQuality] = useState<number>(-1); // -1 = Auto
+  const [currentQuality, setCurrentQuality] = useState<number>(-1);
 
-  // Dynamic Floating Watermark State
   const [watermarkPos, setWatermarkPos] = useState({ top: "20%", left: "30%" });
 
-  // Auto-Resume State
   const hasResumedRef = useRef(false);
   const initialResumeTimeRef = useRef<number>(0);
 
   const sessionTokenRef = useRef<string | null>(null);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const heartbeatIntervalRef = useRef<any>(null);
+  const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const seekSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Send progress heartbeat
   const saveProgress = useCallback(async (timeSec: number) => {
     if (!sessionTokenRef.current || !Number.isFinite(timeSec) || timeSec < 0) return;
     try {
@@ -71,7 +76,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [contentId]);
 
-  // Drift watermark position every 12 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       const top = Math.floor(Math.random() * 70 + 10) + "%";
@@ -81,11 +85,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => clearInterval(interval);
   }, []);
 
-  // Main stream initialization & cleanup lifecycle
   useEffect(() => {
     let isCancelled = false;
+    const currentVideo = videoRef.current;
 
-    // 1. Teardown active timers and instances
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current);
       heartbeatIntervalRef.current = null;
@@ -100,42 +103,31 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hlsRef.current = null;
     }
 
-    const video = videoRef.current;
-    if (video) {
-      if (sessionTokenRef.current && video.currentTime > 0) {
-        saveProgress(video.currentTime);
+    if (currentVideo) {
+      if (sessionTokenRef.current && currentVideo.currentTime > 0) {
+        saveProgress(currentVideo.currentTime);
       }
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
+      currentVideo.pause();
+      currentVideo.removeAttribute("src");
+      currentVideo.load();
     }
 
     sessionTokenRef.current = null;
     hasResumedRef.current = false;
     initialResumeTimeRef.current = 0;
-    setCurrentTime(0);
-    setDuration(0);
-    setIsPlaying(false);
-    setQualities([]);
-    setCurrentQuality(-1);
-    setLoading(true);
-    setErrorMsg(null);
 
     async function initStream() {
       try {
-        // 2. Fetch secure access URL
         const res = await api.get(`/contents/${contentId}/access-url`);
         if (isCancelled) return;
 
         const { url, sessionToken, cookies } = res.data.data;
         sessionTokenRef.current = sessionToken;
 
-        // 3. Fetch last watched progress for Auto-Resume
         try {
           const progressRes = await api.get(`/contents/${contentId}/progress`);
           if (!isCancelled && progressRes.data?.data) {
-            const savedSec = progressRes.data.data.watchedSeconds || 0;
-            initialResumeTimeRef.current = savedSec;
+            initialResumeTimeRef.current = progressRes.data.data.watchedSeconds || 0;
           }
         } catch {
           initialResumeTimeRef.current = 0;
@@ -143,13 +135,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         if (isCancelled) return;
 
-        const currentVideo = videoRef.current;
         if (!currentVideo) {
           setLoading(false);
           return;
         }
 
-        // Build authenticated stream URL with signed query parameters
         let streamUrl = url;
         if (cookies && !url.includes("Expires=") && !url.includes("Key-Pair-Id=")) {
           const separator = url.includes("?") ? "&" : "?";
@@ -162,10 +152,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           )}`;
         }
 
-        // Apply resume time helper
         const applyResumePosition = (vid: HTMLVideoElement) => {
           if (!hasResumedRef.current && initialResumeTimeRef.current > 0) {
-            // If already completed or within 5 seconds of the end, start from 0
             if (vid.duration && initialResumeTimeRef.current >= vid.duration - 5) {
               vid.currentTime = 0;
             } else {
@@ -175,7 +163,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         };
 
-        // 4. Attach HLS.js or native playback
         if (url.includes(".m3u8")) {
           if (Hls.isSupported()) {
             const hls = new Hls({
@@ -234,15 +221,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           setLoading(false);
         }
 
-        // 5. Periodic Heartbeat Loop (20s)
         heartbeatIntervalRef.current = setInterval(() => {
-          const vid = videoRef.current;
-          if (!vid || vid.paused || isCancelled) return;
-          saveProgress(vid.currentTime);
+          if (!currentVideo || currentVideo.paused || isCancelled) return;
+          saveProgress(currentVideo.currentTime);
         }, 20000);
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (!isCancelled) {
-          setErrorMsg(err.response?.data?.message || "Failed to load video stream.");
+          const apiErr = err as ApiErrorShape;
+          setErrorMsg(apiErr.response?.data?.message || apiErr.message || "Failed to load video stream.");
           setLoading(false);
         }
       }
@@ -262,9 +248,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         clearTimeout(seekSaveTimeoutRef.current);
         seekSaveTimeoutRef.current = null;
       }
-      const vid = videoRef.current;
-      if (vid && sessionTokenRef.current && vid.currentTime > 0) {
-        saveProgress(vid.currentTime);
+      if (currentVideo && sessionTokenRef.current && currentVideo.currentTime > 0) {
+        saveProgress(currentVideo.currentTime);
       }
       if (hlsRef.current) {
         hlsRef.current.destroy();

@@ -9,6 +9,7 @@ import contentRoutes from "./routes/content.routes.js";
 import enrollmentRoutes from "./routes/enrollment.routes.js";
 import progressRoutes from "./routes/progress.routes.js";
 import adminRouter from "./routes/admin.routes.js";
+import paymentRoutes from "./routes/payment.routes.js";
 import { errorHandler } from "./middlewares/error.middleware.js";
 
 const app = express();
@@ -58,6 +59,7 @@ app.use("/api/v1", contentRoutes);
 app.use("/api/v1", enrollmentRoutes);
 app.use("/api/v1", progressRoutes);
 app.use("/api/v1/admin", adminRouter);
+app.use("/api/v1/payments", paymentRoutes);
 
 app.use(errorHandler);
 

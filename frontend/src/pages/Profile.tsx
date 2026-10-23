@@ -3,6 +3,20 @@ import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 import { User, Mail, Shield, KeyRound, Loader2, CheckCircle2, AlertCircle, Lock } from "lucide-react";
 
+interface ApiErrorShape {
+  message?: string;
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  const err = error as ApiErrorShape;
+  return err.response?.data?.message || err.message || fallback;
+}
+
 export const Profile: React.FC = () => {
   const { user } = useAuth();
 
@@ -35,8 +49,8 @@ export const Profile: React.FC = () => {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-    } catch (err: any) {
-      setStatusMsg({ type: "error", text: err.response?.data?.message || "Failed to update password" });
+    } catch (err: unknown) {
+      setStatusMsg({ type: "error", text: getErrorMessage(err, "Failed to update password") });
     } finally {
       setIsSaving(false);
     }
@@ -50,7 +64,6 @@ export const Profile: React.FC = () => {
           <p className="text-xs text-neutral-400 mt-0.5">View your account profile and manage security credentials</p>
         </div>
 
-        {/* View Profile Card (Locked identity fields) */}
         <div className="bg-[#0e0e11] border border-neutral-800 rounded-2xl p-6 space-y-4 shadow-xl">
           <h2 className="text-sm font-bold text-neutral-200 flex items-center gap-2">
             <User className="w-4 h-4 text-blue-400" />
@@ -91,7 +104,6 @@ export const Profile: React.FC = () => {
           <p className="text-[11px] text-neutral-500 italic">Name and email alterations require platform administrative approval.</p>
         </div>
 
-        {/* Change Password Card */}
         <div className="bg-[#0e0e11] border border-neutral-800 rounded-2xl p-6 space-y-4 shadow-xl">
           <h2 className="text-sm font-bold text-neutral-200 flex items-center gap-2">
             <KeyRound className="w-4 h-4 text-blue-400" />

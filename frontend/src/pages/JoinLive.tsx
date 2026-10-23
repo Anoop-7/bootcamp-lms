@@ -4,6 +4,15 @@ import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 import { Radio, Loader2, AlertCircle, ExternalLink, ArrowLeft } from "lucide-react";
 
+interface ApiErrorShape {
+  message?: string;
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
 export const JoinLive: React.FC = () => {
   const { cohortId } = useParams<{ cohortId: string }>();
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth();
@@ -33,7 +42,6 @@ export const JoinLive: React.FC = () => {
           throw new Error("No meeting URL found for this live session.");
         }
 
-        // Guarantee an absolute external URL protocol
         const formattedUrl =
           rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
             ? rawUrl
@@ -42,15 +50,13 @@ export const JoinLive: React.FC = () => {
         setMeetingUrl(formattedUrl);
         setLoading(false);
 
-        // Attempt opening in a new tab
         const openedWindow = window.open(formattedUrl, "_blank", "noopener,noreferrer");
-
-        // If the browser popup blocker interrupts window.open, fallback button remains accessible
         if (openedWindow) {
           openedWindow.focus();
         }
-      } catch (err: any) {
-        setErrorMsg(err.response?.data?.message || err.message || "Failed to join live session.");
+      } catch (err: unknown) {
+        const error = err as ApiErrorShape;
+        setErrorMsg(error.response?.data?.message || error.message || "Failed to join live session.");
         setLoading(false);
       }
     }
@@ -115,7 +121,7 @@ export const JoinLive: React.FC = () => {
                 to={`/cohorts/${cohortId}/learn`}
                 className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
               >
-                <ArrowLeft className="w-3 h-3" />
+                <ArrowLeft className="w-3.5 h-3.5" />
                 <span>Return to Course Curriculum</span>
               </Link>
             </div>

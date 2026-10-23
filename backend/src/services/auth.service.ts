@@ -4,11 +4,11 @@ import { Role } from "@prisma/client";
 import { UserRepository } from "../repositories/user.repository.js";
 import prisma from "../config/db.js";
 import { env } from "../config/env.js";
+import { badRequest, conflict, tooManyRequests, unauthorized, notFound } from "../utils/httpError.js";
 
 const userRepository = new UserRepository();
 
 export class AuthService {
-  
   async findByEmail(email: string) {
     const normalized = email.trim().toLowerCase();
     return await userRepository.findByEmail(normalized);
@@ -38,49 +38,73 @@ export class AuthService {
 
   async verifyRegistrationOtp(email: string, otp: string): Promise<void> {
     const normalizedEmail = email.trim().toLowerCase();
-    const record = await prisma.passwordReset.findUnique({
-      where: { email: normalizedEmail },
+    const now = new Date();
+
+    // 1. Atomic attempt increment: only increment if attempts < 5 and not expired
+    const updateResult = await prisma.passwordReset.updateMany({
+      where: {
+        email: normalizedEmail,
+        attempts: { lt: 5 },
+        expiresAt: { gt: now },
+      },
+      data: {
+        attempts: { increment: 1 },
+      },
     });
 
-    if (!record) {
-      throw new Error("INVALID_OTP");
+    if (updateResult.count === 0) {
+      const record = await prisma.passwordReset.findUnique({ where: { email: normalizedEmail } });
+      if (!record) {
+        throw badRequest("No OTP request found. Please request a new verification code.", "NO_OTP_REQUESTED");
+      }
+      if (now > record.expiresAt) {
+        await prisma.passwordReset.delete({ where: { email: normalizedEmail } });
+        throw badRequest("Verification code has expired. Please request a new one.", "OTP_EXPIRED");
+      }
+      if (record.attempts >= 5) {
+        await prisma.passwordReset.delete({ where: { email: normalizedEmail } });
+        throw tooManyRequests("Too many failed attempts. Please request a new code.", "MAX_ATTEMPTS_EXCEEDED");
+      }
+      throw badRequest("Invalid or expired verification code.", "INVALID_OTP");
     }
 
-    if (new Date() > record.expiresAt) {
-      await prisma.passwordReset.delete({ where: { email: normalizedEmail } });
-      throw new Error("INVALID_OTP");
+    // 2. Fetch updated record to verify hash
+    const record = await prisma.passwordReset.findUnique({ where: { email: normalizedEmail } });
+    if (!record) {
+      throw badRequest("No OTP request found. Please request a new verification code.", "NO_OTP_REQUESTED");
     }
 
     const isValid = await bcrypt.compare(otp.trim(), record.otpHash);
     if (!isValid) {
-      await prisma.passwordReset.update({
-        where: { email: normalizedEmail },
-        data: { attempts: { increment: 1 } },
-      });
-      throw new Error("INVALID_OTP");
+      if (record.attempts >= 5) {
+        await prisma.passwordReset.delete({ where: { email: normalizedEmail } });
+        throw tooManyRequests("Too many failed attempts. Please request a new code.", "MAX_ATTEMPTS_EXCEEDED");
+      }
+      throw badRequest("Invalid verification code entered.", "INVALID_OTP");
     }
 
-    // Clean up OTP record upon successful verification
+    // 3. Clean up OTP record upon successful verification
     await prisma.passwordReset.delete({ where: { email: normalizedEmail } });
   }
 
   async register(data: { email: string; password: string; name: string }) {
-    const existingUser = await userRepository.findByEmail(data.email);
+    const normalizedEmail = data.email.trim().toLowerCase();
+    const existingUser = await userRepository.findByEmail(normalizedEmail);
     if (existingUser) {
-      throw new Error("USER_ALREADY_EXISTS");
+      throw conflict("User with this email already exists", "USER_ALREADY_EXISTS");
     }
 
-    if (!data.password || data.password.length < 6) {
-      throw new Error("PASSWORD_TOO_SHORT");
+    if (!data.password || data.password.length < 8) {
+      throw badRequest("Password must be at least 8 characters long", "PASSWORD_TOO_SHORT");
     }
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
 
     const newUser = await userRepository.create({
-      email: data.email,
+      email: normalizedEmail,
       password: hashedPassword,
-      name: data.name,
-      role: Role.STUDENT, // Strictly enforced: public register cannot assign elevated roles
+      name: data.name.trim(),
+      role: Role.STUDENT,
     });
 
     const token = this.generateToken(newUser.id, newUser.role, (newUser as any).tokenVersion ?? 0);
@@ -97,18 +121,19 @@ export class AuthService {
   }
 
   async login(email: string, password?: string) {
-    const user = await userRepository.findByEmail(email);
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await userRepository.findByEmail(normalizedEmail);
     if (!user || !user.password) {
-      throw new Error("INVALID_CREDENTIALS");
+      throw unauthorized("Invalid email or password", "INVALID_CREDENTIALS");
     }
 
     if (!password) {
-      throw new Error("PASSWORD_REQUIRED");
+      throw badRequest("Password is required", "PASSWORD_REQUIRED");
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      throw new Error("INVALID_CREDENTIALS");
+      throw unauthorized("Invalid email or password", "INVALID_CREDENTIALS");
     }
 
     const token = this.generateToken(user.id, user.role, (user as any).tokenVersion ?? 0);
@@ -126,7 +151,7 @@ export class AuthService {
   async getCurrentUser(userId: string) {
     const user = await userRepository.findById(userId);
     if (!user) {
-      throw new Error("USER_NOT_FOUND");
+      throw notFound("User not found", "USER_NOT_FOUND");
     }
     return user;
   }

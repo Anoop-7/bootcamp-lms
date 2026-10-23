@@ -16,7 +16,7 @@ interface AppEnv {
   CLOUDFRONT_PRIVATE_KEY?: string;
   FRONTEND_URL: string;
   CORS_ORIGINS: string[];
-  PAYMENTS_MODE: "mock" | "razorpay";
+  PAYMENTS_MODE: "off" | "mock" | "razorpay";
   TRUST_PROXY: number;
   SMTP_USER?: string;
   SMTP_PASS?: string;
@@ -49,12 +49,14 @@ function validateEnv(): AppEnv {
   const AWS_S3_BUCKET = requireVar("AWS_S3_BUCKET");
   const CLOUDFRONT_DOMAIN = requireVar("CLOUDFRONT_DOMAIN");
 
-  // In development, default FRONTEND_URL to localhost:5173 if not explicitly provided
   const FRONTEND_URL =
     process.env.FRONTEND_URL?.trim() || (!isProd ? "http://localhost:5173" : requireVar("FRONTEND_URL"));
 
-  // Validate PAYMENTS_MODE guard[cite: 8]
-  const PAYMENTS_MODE = (process.env.PAYMENTS_MODE as "mock" | "razorpay") || "mock";
+  // Default to "off" so missing settings never default to granting free access
+  const rawPayments = process.env.PAYMENTS_MODE?.trim().toLowerCase();
+  const PAYMENTS_MODE: "off" | "mock" | "razorpay" =
+    rawPayments === "razorpay" ? "razorpay" : rawPayments === "mock" ? "mock" : "off";
+
   if (isProd && PAYMENTS_MODE === "mock") {
     console.error("❌ [SECURITY FATAL] PAYMENTS_MODE cannot be set to 'mock' in production.");
     process.exit(1);

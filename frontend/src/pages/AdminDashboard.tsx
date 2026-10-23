@@ -80,6 +80,19 @@ interface StudentEnrollmentItem {
   };
 }
 
+interface ApiErrorShape {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  const err = error as ApiErrorShape;
+  return err.response?.data?.message || fallback;
+}
+
 export const AdminDashboard: React.FC = () => {
   const queryClient = useQueryClient();
   const { user: currentAdmin } = useAuth();
@@ -145,12 +158,12 @@ export const AdminDashboard: React.FC = () => {
       const res = await api.post("/admin/invites", payload);
       return res.data.data;
     },
-    onSuccess: (data) => {
+    onSuccess: (data: { inviteUrl: string }) => {
       queryClient.invalidateQueries({ queryKey: ["admin-invites"] });
       setLatestInviteUrl(data.inviteUrl);
       setInviteEmail("");
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to generate invite"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to generate invite")),
   });
 
   const tableReinviteMutation = useMutation({
@@ -158,14 +171,14 @@ export const AdminDashboard: React.FC = () => {
       const res = await api.post("/admin/invites", payload);
       return res.data.data;
     },
-    onSuccess: (data) => {
+    onSuccess: (data: { inviteUrl: string; inviteId: string; email: string; role: string }) => {
       queryClient.invalidateQueries({ queryKey: ["admin-invites"] });
       navigator.clipboard.writeText(data.inviteUrl);
       setCopiedId(data.inviteId);
       setTimeout(() => setCopiedId(null), 3000);
       alert(`A fresh invite for ${data.email} (${data.role}) has been created and copied to your clipboard.`);
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to re-invite"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to re-invite")),
   });
 
   const revokeMutation = useMutation({
@@ -175,7 +188,7 @@ export const AdminDashboard: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-invites"] });
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to revoke invite"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to revoke invite")),
   });
 
   const resendMutation = useMutation({
@@ -183,14 +196,14 @@ export const AdminDashboard: React.FC = () => {
       const res = await api.post(`/admin/invites/${id}/resend`);
       return res.data.data;
     },
-    onSuccess: (data) => {
+    onSuccess: (data: { inviteUrl: string; inviteId: string }) => {
       queryClient.invalidateQueries({ queryKey: ["admin-invites"] });
       navigator.clipboard.writeText(data.inviteUrl);
       setCopiedId(data.inviteId);
       setTimeout(() => setCopiedId(null), 3000);
-      alert(`Invite link renewed for 48 hours and copied to clipboard.`);
+      alert("Invite link renewed for 48 hours and copied to clipboard.");
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to re-arm invite"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to re-arm invite")),
   });
 
   const deleteInviteMutation = useMutation({
@@ -200,7 +213,7 @@ export const AdminDashboard: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-invites"] });
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to delete invite"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to delete invite")),
   });
 
   const updateRoleMutation = useMutation({
@@ -213,7 +226,7 @@ export const AdminDashboard: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["admin-invites"] });
       alert("User role updated successfully.");
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to update role"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to update role")),
   });
 
   const deleteUserMutation = useMutation({
@@ -224,7 +237,7 @@ export const AdminDashboard: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       alert("User and associated records permanently deleted.");
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to delete user"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to delete user")),
   });
 
   const updateCohortStatusMutation = useMutation({
@@ -235,7 +248,7 @@ export const AdminDashboard: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-cohorts"] });
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to update cohort status"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to update cohort status")),
   });
 
   const manualEnrollMutation = useMutation({
@@ -249,7 +262,7 @@ export const AdminDashboard: React.FC = () => {
       setManualEnrollEmail("");
       alert("Student manually enrolled!");
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to enroll student"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to enroll student")),
   });
 
   const revokeEnrollmentMutation = useMutation({
@@ -260,7 +273,7 @@ export const AdminDashboard: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["cohort-enrollments", selectedCohort?.id] });
       queryClient.invalidateQueries({ queryKey: ["admin-cohorts"] });
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to revoke enrollment"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to revoke enrollment")),
   });
 
   const handleCopyLink = (url: string, id: string) => {

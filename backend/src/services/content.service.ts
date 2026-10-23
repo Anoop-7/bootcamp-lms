@@ -246,21 +246,50 @@ export class ContentService {
       throw badRequest("Invalid playback heartbeat position", "INVALID_HEARTBEAT");
     }
 
+    // 1. Validate active session token (single-device enforcement)
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { activeSessionToken: true },
+      select: { id: true, role: true, activeSessionToken: true },
     });
 
     if (!user || user.activeSessionToken !== sessionToken) {
       throw unauthorized("Playback session expired or superseded by another playback tab", "SESSION_EXPIRED_OR_REPLACED");
     }
 
+    // 2. Fetch content and parent cohort
     const content = await prisma.content.findUnique({
       where: { id: contentId },
-      select: { durationSec: true },
+      select: {
+        id: true,
+        durationSec: true,
+        folder: {
+          select: { cohortId: true },
+        },
+      },
     });
 
-    const duration = content?.durationSec || 0;
+    if (!content) {
+      throw notFound("Content lesson not found", "CONTENT_NOT_FOUND");
+    }
+
+    // 3. Verify active cohort enrollment for students
+    if (user.role !== Role.ADMIN && user.role !== Role.INSTRUCTOR) {
+      const enrollment = await prisma.enrollment.findUnique({
+        where: {
+          userId_cohortId: {
+            userId,
+            cohortId: content.folder.cohortId,
+          },
+        },
+      });
+
+      if (!enrollment) {
+        throw forbidden("You must be enrolled in this cohort to save progress", "FORBIDDEN_NOT_ENROLLED");
+      }
+    }
+
+    // 4. Sanitize and bound watched time
+    const duration = content.durationSec || 0;
     const safeWatchedSeconds = duration > 0 ? Math.min(watchedSeconds, duration + 30) : watchedSeconds;
 
     const existingProgress = await prisma.watchProgress.findUnique({
@@ -270,6 +299,7 @@ export class ContentService {
     const currentMax = existingProgress?.maxWatchedSeconds ?? 0;
     const newMaxWatchedSeconds = Math.max(currentMax, Math.floor(safeWatchedSeconds));
 
+    // Strict server-side completion threshold (90% of durationSec)
     const wasCompleted = existingProgress?.isCompleted ?? false;
     const meetsThreshold = duration > 0 && newMaxWatchedSeconds >= Math.floor(duration * 0.9);
     const willBeCompleted = wasCompleted || meetsThreshold;

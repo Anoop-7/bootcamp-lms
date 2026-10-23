@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState } from "react";
 
 export type Role = "STUDENT" | "INSTRUCTOR" | "ADMIN";
 
@@ -22,40 +22,45 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
+  const [token, setToken] = useState<string | null>(() => {
     try {
-      const storedToken = localStorage.getItem("token");
-      const storedUser = localStorage.getItem("user");
-
-      if (storedToken && storedUser) {
-        setToken(storedToken);
-        setUser(JSON.parse(storedUser));
-      }
-    } catch (e) {
-      console.error("Failed to parse stored auth data", e);
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-    } finally {
-      setIsLoading(false);
+      return localStorage.getItem("token");
+    } catch {
+      return null;
     }
-  }, []);
+  });
+
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const stored = localStorage.getItem("user");
+      return stored ? (JSON.parse(stored) as User) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [isLoading] = useState(false);
 
   const login = (newToken: string, newUser: User) => {
     setToken(newToken);
     setUser(newUser);
-    localStorage.setItem("token", newToken);
-    localStorage.setItem("user", JSON.stringify(newUser));
+    try {
+      localStorage.setItem("token", newToken);
+      localStorage.setItem("user", JSON.stringify(newUser));
+    } catch {
+      // Storage write error ignored
+    }
   };
 
   const logout = () => {
     setToken(null);
     setUser(null);
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    try {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+    } catch {
+      // Storage cleanup error ignored
+    }
   };
 
   return (
@@ -74,6 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 };
 
+/* eslint-disable-next-line react-refresh/only-export-components */
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {

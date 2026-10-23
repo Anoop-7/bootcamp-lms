@@ -4,15 +4,11 @@ import prisma from "../config/db.js";
 import { badRequest, notFound, tooManyRequests } from "../utils/httpError.js";
 
 export class PasswordResetService {
-  /**
-   * Generates and stores a hashed 6-digit OTP.
-   * Returns the raw OTP string if the user exists, or null if no user is found.
-   */
   async generateAndSaveResetOtp(email: string): Promise<string | null> {
     const normalizedEmail = email.trim().toLowerCase();
     const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
 
-    // Silent return to prevent user enumeration
+    // Silent return to prevent account enumeration
     if (!user) {
       return null;
     }
@@ -41,19 +37,15 @@ export class PasswordResetService {
     return rawOtp;
   }
 
-  /**
-   * Atomically verifies the OTP with race-condition prevention and max-attempt enforcement.
-   */
   async verifyOtpAndReset(email: string, otp: string, newPassword: string): Promise<void> {
     const normalizedEmail = email.trim().toLowerCase();
 
-    if (!newPassword || newPassword.length < 6) {
-      throw badRequest("New password must be at least 6 characters", "PASSWORD_TOO_SHORT");
+    if (!newPassword || newPassword.length < 8) {
+      throw badRequest("New password must be at least 8 characters", "PASSWORD_TOO_SHORT");
     }
 
     const now = new Date();
 
-    // 1. Atomic attempt increment: only increment if attempts < 5 and not expired
     const updateResult = await prisma.passwordReset.updateMany({
       where: {
         email: normalizedEmail,
@@ -65,7 +57,6 @@ export class PasswordResetService {
       },
     });
 
-    // If no row was updated, the record either never existed, expired, or exceeded 5 attempts
     if (updateResult.count === 0) {
       const record = await prisma.passwordReset.findUnique({ where: { email: normalizedEmail } });
       if (!record) {
@@ -82,7 +73,6 @@ export class PasswordResetService {
       throw badRequest("Invalid or expired OTP code.", "INVALID_OTP");
     }
 
-    // 2. Fetch the updated record to compare hash
     const resetRecord = await prisma.passwordReset.findUnique({
       where: { email: normalizedEmail },
     });
@@ -100,14 +90,17 @@ export class PasswordResetService {
       throw badRequest("Invalid OTP code entered.", "INVALID_OTP");
     }
 
-    // 3. Success: Hash new password, update user, and remove OTP record
+    // Success: Hash new password, invalidate active tokens via tokenVersion increment, and delete OTP
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(newPassword, salt);
 
     await prisma.$transaction([
       prisma.user.update({
         where: { email: normalizedEmail },
-        data: { password: passwordHash },
+        data: {
+          password: passwordHash,
+          tokenVersion: { increment: 1 }, // Invalidates all prior JWTs
+        },
       }),
       prisma.passwordReset.delete({
         where: { email: normalizedEmail },
@@ -116,8 +109,8 @@ export class PasswordResetService {
   }
 
   async updateCurrentPassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
-    if (!newPassword || newPassword.length < 6) {
-      throw badRequest("New password must be at least 6 characters", "PASSWORD_TOO_SHORT");
+    if (!newPassword || newPassword.length < 8) {
+      throw badRequest("New password must be at least 8 characters", "PASSWORD_TOO_SHORT");
     }
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -135,7 +128,10 @@ export class PasswordResetService {
 
     await prisma.user.update({
       where: { id: userId },
-      data: { password: passwordHash },
+      data: {
+        password: passwordHash,
+        tokenVersion: { increment: 1 }, // Invalidates prior sessions
+      },
     });
   }
 }

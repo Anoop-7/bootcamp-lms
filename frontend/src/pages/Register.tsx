@@ -4,6 +4,20 @@ import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 import { AlertCircle, Loader2 } from "lucide-react";
 
+interface ApiErrorShape {
+  message?: string;
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  const err = error as ApiErrorShape;
+  return err.response?.data?.message || err.message || fallback;
+}
+
 export const Register: React.FC = () => {
   const [step, setStep] = useState<"INPUT" | "OTP">("INPUT");
   const [name, setName] = useState("");
@@ -35,8 +49,8 @@ export const Register: React.FC = () => {
         setDevOtp(res.data.data.devOtp);
       }
       setStep("OTP");
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || "Failed to initiate registration.");
+    } catch (err: unknown) {
+      setErrorMsg(getErrorMessage(err, "Failed to initiate registration."));
     } finally {
       setIsSubmitting(false);
     }
@@ -59,8 +73,8 @@ export const Register: React.FC = () => {
       const { token, user } = res.data.data;
       login(token, user);
       navigate("/dashboard");
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || "Invalid or expired OTP code.");
+    } catch (err: unknown) {
+      setErrorMsg(getErrorMessage(err, "Invalid or expired OTP code."));
     } finally {
       setIsSubmitting(false);
     }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -14,6 +14,14 @@ import {
   Check,
 } from "lucide-react";
 
+interface ApiErrorShape {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
 export const InstructorOnboarding: React.FC = () => {
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token") || "";
@@ -21,14 +29,13 @@ export const InstructorOnboarding: React.FC = () => {
   const queryClient = useQueryClient();
   const { login, logout } = useAuth();
 
-  const [name, setName] = useState("");
+  const [enteredName, setEnteredName] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [formError, setFormError] = useState("");
   const [isCompleted, setIsCompleted] = useState(false);
   const [countdown, setCountdown] = useState(3);
 
-  // 1. Verify Token on Page Load (Disabled once completion is triggered)
   const {
     data: inviteData,
     isLoading: isVerifying,
@@ -41,31 +48,25 @@ export const InstructorOnboarding: React.FC = () => {
     },
     enabled: !!token && !isCompleted,
     retry: false,
-    staleTime: Infinity, // Avoid background refetching after acceptance
+    staleTime: Infinity,
   });
 
-  useEffect(() => {
-    if (inviteData?.userExists && inviteData.existingName) {
-      setName(inviteData.existingName);
-    }
-  }, [inviteData]);
-
-  // Real-Time Form Validation
   const isExistingUser = Boolean(inviteData?.userExists);
+  const displayName = isExistingUser ? inviteData?.existingName || "" : enteredName;
+
   const isPasswordLengthValid = password.length >= 6;
   const passwordsMatch = password.length > 0 && password === confirmPassword;
-  const isNameValid = name.trim().length > 0;
+  const isNameValid = displayName.trim().length > 0;
 
   const isFormValid = isExistingUser
     ? password.length > 0
     : isNameValid && isPasswordLengthValid && passwordsMatch;
 
-  // 2. Submit Mutation
   const registerMutation = useMutation({
     mutationFn: async () => {
       const res = await api.post("/auth/register-invited-instructor", {
         token,
-        name: name.trim(),
+        name: displayName.trim(),
         password,
       });
       return res.data.data;
@@ -75,15 +76,16 @@ export const InstructorOnboarding: React.FC = () => {
       logout();
       login(data.token, data.user);
     },
-    onError: (err: any) => {
-      setFormError(err.response?.data?.message || "Activation failed");
+    onError: (err: unknown) => {
+      const apiErr = err as ApiErrorShape;
+      setFormError(apiErr.response?.data?.message || "Activation failed");
     },
   });
 
-  const handleFinishRedirect = () => {
+  const handleFinishRedirect = useCallback(() => {
     queryClient.clear();
     navigate("/instructor", { replace: true });
-  };
+  }, [navigate, queryClient]);
 
   useEffect(() => {
     if (!isCompleted) return;
@@ -98,7 +100,7 @@ export const InstructorOnboarding: React.FC = () => {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [isCompleted]);
+  }, [isCompleted, handleFinishRedirect]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -127,7 +129,6 @@ export const InstructorOnboarding: React.FC = () => {
     );
   }
 
-  // SUCCESS CONFIRMATION ALWAYS HAS PRECEDENCE OVER VERIFICATION STATES
   if (isCompleted) {
     return (
       <div className="min-h-screen bg-[#09090b] flex items-center justify-center p-4">
@@ -168,9 +169,8 @@ export const InstructorOnboarding: React.FC = () => {
   }
 
   if (verificationError) {
-    const errMessage =
-      (verificationError as any)?.response?.data?.message ||
-      "Invalid or expired invitation link.";
+    const err = verificationError as ApiErrorShape;
+    const errMessage = err.response?.data?.message || "Invalid or expired invitation link.";
 
     return (
       <div className="min-h-screen bg-[#09090b] flex items-center justify-center p-4">
@@ -231,8 +231,8 @@ export const InstructorOnboarding: React.FC = () => {
             </label>
             <input
               type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              value={displayName}
+              onChange={(e) => setEnteredName(e.target.value)}
               placeholder="e.g. John Doe"
               disabled={isExistingUser}
               className="w-full px-3.5 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500 disabled:opacity-60"

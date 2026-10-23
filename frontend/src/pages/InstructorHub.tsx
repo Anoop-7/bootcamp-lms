@@ -79,22 +79,31 @@ interface CohortDetailResponse {
   folders: FolderItem[];
 }
 
+interface ApiErrorShape {
+  message?: string;
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  const err = error as ApiErrorShape;
+  return err.response?.data?.message || err.message || fallback;
+}
+
 export const InstructorHub: React.FC = () => {
   const queryClient = useQueryClient();
   const { user } = useAuth();
 
-  // Navigation & Cohort Selection
-  const [selectedCohortId, setSelectedCohortId] = useState<string>("");
+  const [selectedCohortIdState, setSelectedCohortIdState] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"live" | "curriculum" | "pricing" | "analytics">("live");
 
-  // Modals & form toggles
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-
-  // Delete Cohort States
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deleteConfirmationInput, setDeleteConfirmationInput] = useState("");
 
-  // New Cohort Form State
   const [newTitle, setNewTitle] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newStartDate, setNewStartDate] = useState("");
@@ -111,17 +120,14 @@ export const InstructorHub: React.FC = () => {
     newPrice !== "" &&
     Number(newPrice) >= 0;
 
-  // Live Broadcast State
   const [zoomUrl, setZoomUrl] = useState("");
 
-  // Curriculum State
   const [folderTitle, setFolderTitle] = useState("");
-  const [selectedFolderId, setSelectedFolderId] = useState<string>("");
+  const [selectedFolderIdState, setSelectedFolderIdState] = useState<string>("");
   const [contentType, setContentType] = useState<string>("");
   const [contentTitle, setContentTitle] = useState("");
   const [resourceDocUrl, setResourceDocUrl] = useState("");
 
-  // Curriculum Tree Explorer State
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingFolderTitle, setEditingFolderTitle] = useState("");
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
@@ -130,17 +136,14 @@ export const InstructorHub: React.FC = () => {
     setCollapsedFolders((prev) => ({ ...prev, [folderId]: !prev[folderId] }));
   };
 
-  // S3 Multipart Upload State
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
-  // Pricing & Details Tab States
   const [isEditingDetails, setIsEditingDetails] = useState(false);
   const [isConfirmSaveOpen, setIsConfirmSaveOpen] = useState(false);
   const [pendingCohortUpdates, setPendingCohortUpdates] = useState<Partial<CohortDetailResponse> | null>(null);
 
-  // 1. Fetch Cohorts List
   const { data: cohorts, isLoading: isCohortsLoading } = useQuery<CohortDetailResponse[]>({
     queryKey: ["instructor-cohorts", user?.id],
     queryFn: async () => {
@@ -150,13 +153,9 @@ export const InstructorHub: React.FC = () => {
     enabled: !!user?.id,
   });
 
-  React.useEffect(() => {
-    if (!selectedCohortId && cohorts && cohorts.length > 0) {
-      setSelectedCohortId(cohorts[0].id);
-    }
-  }, [cohorts, selectedCohortId]);
+  const selectedCohortId =
+    selectedCohortIdState || (cohorts && cohorts.length > 0 ? cohorts[0].id : "");
 
-  // 2. Fetch Selected Cohort Details (Auto-poll every 5s if any video is ENCODING or QUEUED)
   const { data: currentCohort } = useQuery<CohortDetailResponse>({
     queryKey: ["cohort-curriculum", selectedCohortId],
     queryFn: async () => {
@@ -178,13 +177,11 @@ export const InstructorHub: React.FC = () => {
     },
   });
 
-  React.useEffect(() => {
-    if (selectedFolderId && !currentCohort?.folders?.some((f) => f.id === selectedFolderId)) {
-      setSelectedFolderId("");
-    }
-  }, [currentCohort, selectedFolderId]);
+  const selectedFolderId =
+    currentCohort?.folders?.some((f) => f.id === selectedFolderIdState)
+      ? selectedFolderIdState
+      : "";
 
-  // 3. Attendance Logs
   const { data: attendanceList, isLoading: isAttendanceLoading } = useQuery<AttendanceRecord[]>({
     queryKey: ["cohort-attendance", selectedCohortId],
     queryFn: async () => {
@@ -195,7 +192,6 @@ export const InstructorHub: React.FC = () => {
     refetchInterval: currentCohort?.isLiveActive ? 5000 : false,
   });
 
-  // 4. Mutations
   const createCohortMutation = useMutation({
     mutationFn: async () => {
       const res = await api.post("/cohorts", {
@@ -210,10 +206,10 @@ export const InstructorHub: React.FC = () => {
       });
       return res.data.data;
     },
-    onSuccess: (newCohort) => {
+    onSuccess: (newCohort: CohortDetailResponse) => {
       queryClient.invalidateQueries({ queryKey: ["instructor-cohorts"] });
       setIsCreateModalOpen(false);
-      setSelectedCohortId(newCohort.id);
+      setSelectedCohortIdState(newCohort.id);
       setNewTitle("");
       setNewDescription("");
       setNewThumbnail("");
@@ -222,8 +218,8 @@ export const InstructorHub: React.FC = () => {
       setNewOriginalPrice(4999);
       alert("Cohort created as Draft! You can now configure curriculum and pricing before publishing.");
     },
-    onError: (err: any) => {
-      alert(err.response?.data?.message || "Failed to create cohort");
+    onError: (err: unknown) => {
+      alert(getErrorMessage(err, "Failed to create cohort"));
     },
   });
 
@@ -240,8 +236,8 @@ export const InstructorHub: React.FC = () => {
       setPendingCohortUpdates(null);
       alert("Cohort details updated successfully!");
     },
-    onError: (err: any) => {
-      alert("Failed to update settings: " + (err.response?.data?.message || err.message));
+    onError: (err: unknown) => {
+      alert("Failed to update settings: " + getErrorMessage(err, "Update failed"));
     },
   });
 
@@ -253,11 +249,11 @@ export const InstructorHub: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["instructor-cohorts", user?.id] });
       setIsDeleteModalOpen(false);
       setDeleteConfirmationInput("");
-      setSelectedCohortId("");
+      setSelectedCohortIdState("");
       alert("Cohort has been permanently deleted.");
     },
-    onError: (err: any) => {
-      alert(err.response?.data?.message || "Failed to delete cohort");
+    onError: (err: unknown) => {
+      alert(getErrorMessage(err, "Failed to delete cohort"));
     },
   });
 
@@ -274,8 +270,8 @@ export const InstructorHub: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["public-cohorts"] });
       alert("Cohort visibility status updated successfully!");
     },
-    onError: (err: any) => {
-      alert("Failed to update status: " + (err.response?.data?.message || err.message));
+    onError: (err: unknown) => {
+      alert("Failed to update status: " + getErrorMessage(err, "Status update failed"));
     },
   });
 
@@ -335,7 +331,7 @@ export const InstructorHub: React.FC = () => {
       setEditingFolderId(null);
       setEditingFolderTitle("");
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to rename folder"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to rename folder")),
   });
 
   const deleteFolderMutation = useMutation({
@@ -346,7 +342,7 @@ export const InstructorHub: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["cohort-curriculum", selectedCohortId] });
       alert("Folder and its contents removed.");
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to delete folder"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to delete folder")),
   });
 
   const deleteContentMutation = useMutation({
@@ -357,7 +353,7 @@ export const InstructorHub: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["cohort-curriculum", selectedCohortId] });
       alert("Asset deleted.");
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Failed to delete asset"),
+    onError: (err: unknown) => alert(getErrorMessage(err, "Failed to delete asset")),
   });
 
   const isVideoType = contentType === "RECORDING" || contentType === "OFFLINE_VIDEO";
@@ -384,8 +380,8 @@ export const InstructorHub: React.FC = () => {
         });
 
         finalVideoAssetId = videoAssetId;
-      } catch (err: any) {
-        alert("Multipart upload failed: " + (err.response?.data?.message || err.message));
+      } catch (err: unknown) {
+        alert("Multipart upload failed: " + getErrorMessage(err, "Upload failed"));
         setIsUploading(false);
         setUploadProgress(null);
         return;
@@ -419,8 +415,8 @@ export const InstructorHub: React.FC = () => {
       setUploadProgress(null);
       queryClient.invalidateQueries({ queryKey: ["cohort-curriculum", selectedCohortId] });
       alert("Lecture asset uploaded and queued for transcoding!");
-    } catch (err: any) {
-      alert("Failed to attach asset: " + (err.response?.data?.message || err.message));
+    } catch (err: unknown) {
+      alert("Failed to attach asset: " + getErrorMessage(err, "Attachment failed"));
     }
   };
 
@@ -434,7 +430,6 @@ export const InstructorHub: React.FC = () => {
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-[#09090b] text-neutral-100">
-      {/* Top Banner */}
       <div className="border-b border-neutral-800 bg-[#0f0f12]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -452,12 +447,11 @@ export const InstructorHub: React.FC = () => {
               </p>
             </div>
 
-            {/* Quick Cohort Select + Create Button */}
             <div className="flex items-center gap-3">
               {cohorts && cohorts.length > 0 && (
                 <select
                   value={selectedCohortId}
-                  onChange={(e) => setSelectedCohortId(e.target.value)}
+                  onChange={(e) => setSelectedCohortIdState(e.target.value)}
                   className="bg-neutral-900 border border-neutral-800 text-white text-xs font-medium rounded-xl px-3 py-2.5 outline-none focus:border-indigo-500 max-w-xs truncate"
                 >
                   {cohorts.map((c) => (
@@ -478,7 +472,6 @@ export const InstructorHub: React.FC = () => {
             </div>
           </div>
 
-          {/* Sub Navigation Tabs */}
           <div className="flex items-center gap-2 mt-6 border-t border-neutral-800/80 pt-4 overflow-x-auto">
             <button
               onClick={() => setActiveTab("live")}
@@ -536,7 +529,6 @@ export const InstructorHub: React.FC = () => {
         </div>
       </div>
 
-      {/* Cohort Status & Publish Bar */}
       {currentCohort && (
         <div className="bg-[#121216] border-b border-neutral-800/80 px-4 sm:px-8 py-3">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -616,9 +608,7 @@ export const InstructorHub: React.FC = () => {
         </div>
       )}
 
-      {/* Main Workspace Body */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* TAB 1: LIVE BROADCAST STUDIO */}
         {activeTab === "live" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="bg-[#121216] border border-neutral-800/80 rounded-2xl p-6 shadow-xl space-y-6">
@@ -719,10 +709,8 @@ export const InstructorHub: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 2: CURRICULUM TREE EXPLORER & ASSETS MANAGEMENT */}
         {activeTab === "curriculum" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-            {/* Main Curriculum Column */}
             <div className="lg:col-span-7 bg-[#121216] border border-neutral-800/80 rounded-2xl p-6 shadow-xl space-y-5">
               <div className="flex items-center justify-between border-b border-neutral-800 pb-4">
                 <div>
@@ -736,7 +724,6 @@ export const InstructorHub: React.FC = () => {
                 </div>
               </div>
 
-              {/* Module Accordion List */}
               {currentCohort?.folders && currentCohort.folders.length > 0 ? (
                 <div className="space-y-3">
                   {currentCohort.folders.map((folder, index) => {
@@ -748,7 +735,6 @@ export const InstructorHub: React.FC = () => {
                         key={folder.id}
                         className="bg-neutral-950/70 border border-neutral-800/80 rounded-xl overflow-hidden transition-colors"
                       >
-                        {/* Folder Header */}
                         <div className="p-3.5 flex items-center justify-between gap-3 bg-neutral-900/40">
                           <div className="flex items-center gap-2.5 flex-1 min-w-0">
                             <button
@@ -808,7 +794,7 @@ export const InstructorHub: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setSelectedFolderId(folder.id);
+                                  setSelectedFolderIdState(folder.id);
                                 }}
                                 title="Attach asset to this folder"
                                 className="px-2 py-1 text-[11px] font-medium text-neutral-400 hover:text-indigo-400 hover:bg-neutral-800 rounded-md transition-colors"
@@ -846,7 +832,6 @@ export const InstructorHub: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Nested Content List with Real-time Status Badges */}
                         {!isCollapsed && (
                           <div className="p-3 divide-y divide-neutral-900 border-t border-neutral-800/40">
                             {folder.contents && folder.contents.length > 0 ? (
@@ -874,7 +859,6 @@ export const InstructorHub: React.FC = () => {
                                         {content.type}
                                       </span>
 
-                                      {/* Video Processing State Badges */}
                                       {isVideo && status && (
                                         <>
                                           {status === "UPLOADING" && (
@@ -939,9 +923,7 @@ export const InstructorHub: React.FC = () => {
               )}
             </div>
 
-            {/* Right Action Forms */}
             <div className="lg:col-span-5 space-y-6">
-              {/* Form 1: Add Module Folder */}
               <div className="bg-[#121216] border border-neutral-800/80 rounded-2xl p-5 shadow-xl space-y-3">
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <FolderPlus className="w-4 h-4 text-indigo-400" />
@@ -970,7 +952,6 @@ export const InstructorHub: React.FC = () => {
                 </button>
               </div>
 
-              {/* Form 2: Attach Lecture Asset */}
               <form
                 onSubmit={handleAttachContent}
                 className="bg-[#121216] border border-neutral-800/80 rounded-2xl p-5 shadow-xl space-y-3"
@@ -987,7 +968,7 @@ export const InstructorHub: React.FC = () => {
                   {currentCohort?.folders && currentCohort.folders.length > 0 ? (
                     <select
                       value={selectedFolderId}
-                      onChange={(e) => setSelectedFolderId(e.target.value)}
+                      onChange={(e) => setSelectedFolderIdState(e.target.value)}
                       className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
                     >
                       <option value="" disabled>
@@ -1113,7 +1094,6 @@ export const InstructorHub: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: PRICING & COHORT DETAILS */}
         {activeTab === "pricing" && currentCohort && (
           <div className="max-w-4xl bg-[#121216] border border-neutral-800/80 rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-800 pb-5">
@@ -1138,7 +1118,6 @@ export const InstructorHub: React.FC = () => {
               )}
             </div>
 
-            {/* Read-only overview */}
             {!isEditingDetails ? (
               <div className="space-y-6">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -1227,13 +1206,19 @@ export const InstructorHub: React.FC = () => {
                   const formData = new FormData(form);
 
                   const rawStartDate = formData.get("startDate") as string;
+                  const deliveryTypeVal = formData.get("deliveryType");
+                  const statusVal = formData.get("status");
 
                   const payload: Partial<CohortDetailResponse> = {
                     price: Number(formData.get("price")),
                     originalPrice: Number(formData.get("originalPrice")),
                     validity: formData.get("validity") as string,
-                    deliveryType: formData.get("deliveryType") as any,
-                    status: formData.get("status") as any,
+                    deliveryType: (deliveryTypeVal || "LIVE") as "LIVE" | "RECORDED" | "HYBRID",
+                    status: (statusVal || "UPCOMING_LIVE") as
+                      | "UPCOMING_LIVE"
+                      | "ONGOING_LIVE"
+                      | "COMPLETED_LIVE"
+                      | "SELF_PACED",
                     startDate: rawStartDate ? new Date(rawStartDate).toISOString() : null,
                     description: formData.get("description") as string,
                   };
@@ -1366,7 +1351,6 @@ export const InstructorHub: React.FC = () => {
               </form>
             )}
 
-            {/* Danger Zone */}
             <div className="mt-8 pt-6 border-t border-red-950/40">
               <div className="p-5 rounded-2xl bg-red-950/10 border border-red-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
@@ -1389,7 +1373,6 @@ export const InstructorHub: React.FC = () => {
               </div>
             </div>
 
-            {/* Delete Modal */}
             {isDeleteModalOpen && (
               <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-[#121216] border border-red-900/60 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
@@ -1447,7 +1430,6 @@ export const InstructorHub: React.FC = () => {
               </div>
             )}
 
-            {/* Confirm Save Modal */}
             {isConfirmSaveOpen && (
               <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-[#121216] border border-neutral-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
@@ -1488,7 +1470,6 @@ export const InstructorHub: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 4: ANALYTICS */}
         {activeTab === "analytics" && (
           <div className="max-w-2xl mx-auto py-16 text-center space-y-4">
             <div className="w-12 h-12 rounded-2xl bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center mx-auto">
@@ -1502,7 +1483,6 @@ export const InstructorHub: React.FC = () => {
         )}
       </div>
 
-      {/* CREATE COHORT MODAL */}
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#121216] border border-neutral-800 rounded-2xl w-full max-w-xl p-6 sm:p-7 space-y-5 shadow-2xl relative max-h-[90vh] overflow-y-auto">
@@ -1567,7 +1547,9 @@ export const InstructorHub: React.FC = () => {
                   </label>
                   <select
                     value={newDeliveryType}
-                    onChange={(e) => setNewDeliveryType(e.target.value as any)}
+                    onChange={(e) =>
+                      setNewDeliveryType(e.target.value as "LIVE" | "RECORDED" | "HYBRID")
+                    }
                     className="w-full px-3.5 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
                   >
                     <option value="LIVE">Live Interactive</option>

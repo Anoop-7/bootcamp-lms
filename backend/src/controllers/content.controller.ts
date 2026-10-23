@@ -152,19 +152,27 @@ export class ContentController {
 
       if (data.url.includes("cloudfront.net")) {
         try {
-          const cookies = generateCloudFrontCookies("/*");
+          // Scope cookie resource to the specific lecture HLS directory instead of wildcard /*
+          const urlObj = new URL(data.url);
+          const pathSegments = urlObj.pathname.split("/");
+          pathSegments.pop(); // remove master.m3u8
+          const directoryPath = pathSegments.join("/");
+          const scopedResource = `${urlObj.origin}${directoryPath}/*`;
+
+          // Generate cookies scoped strictly to this lesson path with a 2-hour lifetime
+          const cookies = generateCloudFrontCookies(scopedResource);
           const cookieOptions = {
             httpOnly: true,
             secure: true,
             sameSite: "none" as const,
-            maxAge: 6 * 60 * 60 * 1000,
+            maxAge: 2 * 60 * 60 * 1000, // 2 hours
           };
 
           res.cookie("CloudFront-Policy", cookies["CloudFront-Policy"], cookieOptions);
           res.cookie("CloudFront-Signature", cookies["CloudFront-Signature"], cookieOptions);
           res.cookie("CloudFront-Key-Pair-Id", cookies["CloudFront-Key-Pair-Id"], cookieOptions);
 
-          (data as any).cookies = cookies;
+          // IMPORTANT: Do NOT leak signed cookies/secrets in the JSON response body
         } catch (cookieErr) {
           console.warn("⚠️ [CloudFront Signer] Could not issue signed cookies:", cookieErr);
         }

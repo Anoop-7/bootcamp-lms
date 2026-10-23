@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo, useEffect } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { VideoPlayer } from "../components/VideoPlayer";
@@ -59,17 +59,14 @@ export const CoursePlayer: React.FC = () => {
   const queryClient = useQueryClient();
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Navigation & explorer states
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [activeContent, setActiveContent] = useState<ContentItem | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
-  // Player cinema states
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
 
-  // 1. Fetch Cohort Curriculum
   const { data: cohort, isLoading: isCohortLoading } = useQuery<CohortDetail>({
     queryKey: ["cohort-curriculum", cohortId],
     queryFn: async () => {
@@ -79,18 +76,6 @@ export const CoursePlayer: React.FC = () => {
     enabled: !!cohortId,
   });
 
-  // Expand all folders by default on mount
-  useEffect(() => {
-    if (cohort?.folders) {
-      const initialMap: Record<string, boolean> = {};
-      cohort.folders.forEach((f) => {
-        initialMap[f.id] = true;
-      });
-      setExpandedFolders(initialMap);
-    }
-  }, [cohort]);
-
-  // 2. Fetch Progress
   const { data: progressList } = useQuery<WatchProgress[]>({
     queryKey: ["cohort-progress", cohortId],
     queryFn: async () => {
@@ -106,7 +91,6 @@ export const CoursePlayer: React.FC = () => {
     return map;
   }, [progressList]);
 
-  // Total Progress Stats
   const { totalVideos, completedVideos, progressPercent } = useMemo(() => {
     if (!cohort?.folders) return { totalVideos: 0, completedVideos: 0, progressPercent: 0 };
     let total = 0;
@@ -127,7 +111,6 @@ export const CoursePlayer: React.FC = () => {
     return { totalVideos: total, completedVideos: completed, progressPercent: percent };
   }, [cohort, progressMap]);
 
-  // 3. Mutation: Update Progress
   const progressMutation = useMutation({
     mutationFn: async (payload: { contentId: string; watchedSeconds: number; isCompleted?: boolean }) => {
       const res = await api.post(`/contents/${payload.contentId}/progress`, {
@@ -142,7 +125,7 @@ export const CoursePlayer: React.FC = () => {
   });
 
   const toggleFolderAccordion = (folderId: string) => {
-    setExpandedFolders((prev) => ({
+    setCollapsedFolders((prev) => ({
       ...prev,
       [folderId]: !prev[folderId],
     }));
@@ -151,11 +134,10 @@ export const CoursePlayer: React.FC = () => {
   const handleSelectContent = (item: ContentItem) => {
     setActiveContent(item);
 
-    // Sync selectedFolderId to whichever folder owns this content
     const parentFolder = cohort?.folders?.find((f) => f.contents?.some((c) => c.id === item.id));
     if (parentFolder) {
       setSelectedFolderId(parentFolder.id);
-      setExpandedFolders((prev) => ({ ...prev, [parentFolder.id]: true }));
+      setCollapsedFolders((prev) => ({ ...prev, [parentFolder.id]: false }));
     }
   };
 
@@ -181,9 +163,6 @@ export const CoursePlayer: React.FC = () => {
 
   const currentFolder = cohort?.folders?.find((f) => f.id === selectedFolderId);
 
-  // -------------------------------------------------------------
-  // REUSABLE LIVE BANNER COMPONENT
-  // -------------------------------------------------------------
   const renderLiveAlert = () => {
     if (!cohort?.isLiveActive) return null;
 
@@ -218,9 +197,6 @@ export const CoursePlayer: React.FC = () => {
     );
   };
 
-  // -------------------------------------------------------------
-  // VIEW 1: DEDICATED SLIDES / RESOURCE CARD VIEW
-  // -------------------------------------------------------------
   if (activeContent && (activeContent.type === "SLIDES" || activeContent.type === "DOCUMENT")) {
     return (
       <div className="min-h-[calc(100vh-4rem)] bg-[#050507] text-neutral-100 flex flex-col justify-between">
@@ -277,9 +253,6 @@ export const CoursePlayer: React.FC = () => {
     );
   }
 
-  // -------------------------------------------------------------
-  // VIEW 2: CINEMA VIDEO PLAYER
-  // -------------------------------------------------------------
   if (activeContent && (activeContent.type === "RECORDING" || activeContent.type === "OFFLINE_VIDEO")) {
     const isCompleted = progressMap.get(activeContent.id)?.isCompleted ?? false;
 
@@ -288,7 +261,6 @@ export const CoursePlayer: React.FC = () => {
         {renderLiveAlert()}
 
         <div className="flex flex-1 overflow-hidden">
-          {/* Left Sidebar */}
           {isSidebarOpen && (
             <aside className="w-72 lg:w-80 flex-shrink-0 border-r border-neutral-900 bg-[#09090b] flex flex-col h-full overflow-hidden transition-all duration-200 z-20">
               <div className="px-4 py-3.5 border-b border-neutral-900/80 flex items-center justify-between">
@@ -299,7 +271,7 @@ export const CoursePlayer: React.FC = () => {
 
               <div className="flex-1 overflow-y-auto p-2 space-y-1">
                 {cohort?.folders?.map((folder) => {
-                  const isOpen = !!expandedFolders[folder.id];
+                  const isOpen = !collapsedFolders[folder.id];
 
                   return (
                     <div key={folder.id} className="rounded-lg overflow-hidden">
@@ -364,11 +336,8 @@ export const CoursePlayer: React.FC = () => {
             </aside>
           )}
 
-          {/* Main Cinema Area */}
           <main className="flex-1 flex flex-col h-full overflow-y-auto bg-black">
             <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col justify-start">
-              
-              {/* Top Action Bar */}
               <div className="flex items-center gap-4 mb-2.5">
                 <button
                   onClick={() => setIsSidebarOpen((prev) => !prev)}
@@ -387,7 +356,6 @@ export const CoursePlayer: React.FC = () => {
                 </button>
               </div>
 
-              {/* Video Container */}
               <div className="w-full bg-[#050507] rounded-xl overflow-hidden border border-neutral-900 shadow-2xl relative aspect-video max-h-[68vh] flex items-center justify-center">
                 <VideoPlayer
                   key={activeContent.id}
@@ -402,7 +370,6 @@ export const CoursePlayer: React.FC = () => {
                 />
               </div>
 
-              {/* Title & Under-Video Actions */}
               <div className="mt-4 space-y-3">
                 <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
                   {activeContent.title}
@@ -422,7 +389,6 @@ export const CoursePlayer: React.FC = () => {
                   </button>
                 </div>
               </div>
-
             </div>
           </main>
         </div>
@@ -430,14 +396,10 @@ export const CoursePlayer: React.FC = () => {
     );
   }
 
-  // -------------------------------------------------------------
-  // VIEW 3: MODULE & FOLDER CARDS DIRECTORY
-  // -------------------------------------------------------------
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-[#050507] text-white">
       {renderLiveAlert()}
 
-      {/* Top Banner & Progress Header */}
       <div className="border-b border-neutral-900 bg-[#09090b]/40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-4">
           <div className="flex items-center gap-3">
@@ -486,7 +448,6 @@ export const CoursePlayer: React.FC = () => {
         </div>
       </div>
 
-      {/* Explorer Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="relative w-full sm:w-80">
@@ -522,7 +483,6 @@ export const CoursePlayer: React.FC = () => {
           </div>
         </div>
 
-        {/* Level 1: Root Folder Cards */}
         {!selectedFolderId && (
           <div
             className={
@@ -580,7 +540,6 @@ export const CoursePlayer: React.FC = () => {
           </div>
         )}
 
-        {/* Level 2: Inside Folder - Content Cards */}
         {selectedFolderId && currentFolder && (
           <div
             className={
