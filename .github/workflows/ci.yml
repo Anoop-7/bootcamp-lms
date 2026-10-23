@@ -28,6 +28,8 @@ jobs:
         run: npm ci
 
       - name: Generate Prisma Client
+        env:
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/bootcamp?schema=public"
         run: npx prisma generate
 
       - name: Run TypeScript Check
