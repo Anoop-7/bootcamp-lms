@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import { Role } from "@prisma/client";
 import { UserRepository } from "../repositories/user.repository.js";
 import prisma from "../config/db.js";
@@ -205,7 +206,7 @@ export class AuthService {
   }
 
   public generateRefreshToken(userId: string, tokenVersion: number = 0): string {
-    return jwt.sign({ userId, tokenVersion }, env.JWT_SECRET, { expiresIn: "7d" });
+    return jwt.sign({ userId, tokenVersion, jti: crypto.randomUUID() }, env.JWT_SECRET, { expiresIn: "7d" });
   }
 
   public generateToken(userId: string, role: Role, tokenVersion: number = 0): string {
