@@ -21,6 +21,13 @@ vi.mock("../../src/repositories/user.repository.js", () => {
   return { UserRepository: MockUserRepository };
 });
 
+const getCookies = (res: request.Response): string[] => {
+  const header = res.headers["set-cookie"];
+  if (Array.isArray(header)) return header;
+  if (typeof header === "string") return [header];
+  return [];
+};
+
 describe("Auth HTTP Integration Routes", () => {
   const authService = new AuthService();
 
@@ -46,9 +53,9 @@ describe("Auth HTTP Integration Routes", () => {
       expect(res.body.status).toBe("error");
 
       // Verify Set-Cookie header contains instructions to expire the cookie
-      const setCookie = res.headers["set-cookie"];
-      expect(setCookie).toBeDefined();
-      expect(setCookie.some((c: string) => c.includes("refreshToken=;"))).toBe(true);
+      const cookies = getCookies(res);
+      expect(cookies.length).toBeGreaterThan(0);
+      expect(cookies.some((c) => c.includes("refreshToken=;"))).toBe(true);
     });
 
     it("should rotate tokens and return new access token when valid refresh cookie is sent", async () => {
@@ -75,9 +82,9 @@ describe("Auth HTTP Integration Routes", () => {
       expect(res.body.data.user.id).toBe(userId);
 
       // Verify Set-Cookie header sets the newly rotated refreshToken
-      const setCookie = res.headers["set-cookie"];
-      expect(setCookie).toBeDefined();
-      expect(setCookie.some((c: string) => c.includes("refreshToken="))).toBe(true);
+      const cookies = getCookies(res);
+      expect(cookies.length).toBeGreaterThan(0);
+      expect(cookies.some((c) => c.includes("refreshToken="))).toBe(true);
     });
   });
 
@@ -89,9 +96,9 @@ describe("Auth HTTP Integration Routes", () => {
       expect(res.body.status).toBe("success");
       expect(res.body.message).toBe("Logged out successfully");
 
-      const setCookie = res.headers["set-cookie"];
-      expect(setCookie).toBeDefined();
-      expect(setCookie.some((c: string) => c.includes("refreshToken=;"))).toBe(true);
+      const cookies = getCookies(res);
+      expect(cookies.length).toBeGreaterThan(0);
+      expect(cookies.some((c) => c.includes("refreshToken=;"))).toBe(true);
     });
   });
 
