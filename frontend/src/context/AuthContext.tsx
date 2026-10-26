@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState } from "react";
+import { api } from "../lib/api";
 
 export type Role = "STUDENT" | "INSTRUCTOR" | "ADMIN";
 
@@ -53,6 +54,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
+    // Notify server to clear httpOnly refreshToken cookie
+    api.post("/auth/logout").catch(() => {});
+
     setToken(null);
     setUser(null);
     try {

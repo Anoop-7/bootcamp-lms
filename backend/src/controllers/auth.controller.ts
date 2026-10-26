@@ -4,11 +4,34 @@ import { AuthService } from "../services/auth.service.js";
 import { InviteService } from "../services/invite.service.js";
 import { MailerService } from "../services/mailer.service.js";
 import { env } from "../config/env.js";
-import { badRequest, conflict } from "../utils/httpError.js";
+import { badRequest, conflict, unauthorized } from "../utils/httpError.js";
 
 const authService = new AuthService();
 const inviteService = new InviteService();
 const mailerService = new MailerService();
+
+const REFRESH_COOKIE_NAME = "refreshToken";
+
+const getRefreshCookieOptions = (): import("express").CookieOptions => ({
+  httpOnly: true,
+  secure: env.NODE_ENV === "production",
+  sameSite: env.NODE_ENV === "production" ? "none" : "lax",
+  path: "/",
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+});
+
+const setRefreshTokenCookie = (res: Response, token: string): void => {
+  res.cookie(REFRESH_COOKIE_NAME, token, getRefreshCookieOptions());
+};
+
+const clearRefreshTokenCookie = (res: Response): void => {
+  res.clearCookie(REFRESH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: env.NODE_ENV === "production",
+    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
+    path: "/",
+  });
+};
 
 export class AuthController {
   async initiateRegister(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -58,8 +81,16 @@ export class AuthController {
 
       await authService.verifyRegistrationOtp(email, otp);
       const result = await authService.register({ email, password, name });
+      setRefreshTokenCookie(res, result.refreshToken);
 
-      res.status(201).json({ status: "success", data: result });
+      res.status(201).json({
+        status: "success",
+        data: {
+          token: result.accessToken,
+          accessToken: result.accessToken,
+          user: result.user,
+        },
+      });
     } catch (err: any) {
       next(err);
     }
@@ -73,7 +104,52 @@ export class AuthController {
       }
 
       const result = await authService.login(email, password);
-      res.status(200).json({ status: "success", data: result });
+      setRefreshTokenCookie(res, result.refreshToken);
+
+      res.status(200).json({
+        status: "success",
+        data: {
+          token: result.accessToken,
+          accessToken: result.accessToken,
+          user: result.user,
+        },
+      });
+    } catch (err: any) {
+      next(err);
+    }
+  }
+
+  async refreshToken(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const rawToken = req.cookies?.[REFRESH_COOKIE_NAME];
+      if (!rawToken) {
+        throw unauthorized("Refresh token missing", "MISSING_REFRESH_TOKEN");
+      }
+
+      const result = await authService.refreshSession(rawToken);
+      setRefreshTokenCookie(res, result.refreshToken);
+
+      res.status(200).json({
+        status: "success",
+        data: {
+          token: result.accessToken,
+          accessToken: result.accessToken,
+          user: result.user,
+        },
+      });
+    } catch (err: any) {
+      clearRefreshTokenCookie(res);
+      next(err);
+    }
+  }
+
+  async logout(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      clearRefreshTokenCookie(res);
+      res.status(200).json({
+        status: "success",
+        message: "Logged out successfully",
+      });
     } catch (err: any) {
       next(err);
     }
@@ -111,8 +187,10 @@ export class AuthController {
       }
 
       const user = await inviteService.acceptInvite(token, name, password);
-      // Issue token with the created user's actual tokenVersion
-      const authToken = authService.generateToken(user.id, user.role, user.tokenVersion ?? 0);
+      // Issue tokens with the created user's actual tokenVersion
+      const authToken = authService.generateAccessToken(user.id, user.role, user.tokenVersion ?? 0);
+      const refreshToken = authService.generateRefreshToken(user.id, user.tokenVersion ?? 0);
+      setRefreshTokenCookie(res, refreshToken);
 
       res.status(200).json({
         status: "success",
@@ -120,6 +198,7 @@ export class AuthController {
         data: {
           user,
           token: authToken,
+          accessToken: authToken,
         },
       });
     } catch (err: any) {

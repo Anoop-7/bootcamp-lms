@@ -89,6 +89,7 @@ All API responses follow a uniform, JSend-compliant envelope structure:
   }
 }
 ```
+* **Cookie Set:** `refreshToken` (HTTP-only, 7-day expiry, sameSite, secure)
 * **Error Response (401 Unauthorized):**
 ```json
 {
@@ -96,6 +97,49 @@ All API responses follow a uniform, JSend-compliant envelope structure:
   "message": "Invalid email or password"
 }
 ```
+
+---
+
+### POST /api/v1/auth/refresh
+* **Access:** Public (Requires `refreshToken` HTTP-only cookie)
+* **Cookies:** `refreshToken=<token>`
+* **Success Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "token": "eyJhbGciOi...",
+    "accessToken": "eyJhbGciOi...",
+    "user": {
+      "id": "7d0c58ce-6377-484c-acce-e57100f44719",
+      "email": "student@example.com",
+      "name": "Test Student",
+      "role": "STUDENT"
+    }
+  }
+}
+```
+* **Cookie Rotated:** Fresh `refreshToken` cookie set on response.
+* **Error Response (401 Unauthorized):**
+```json
+{
+  "status": "error",
+  "message": "Invalid or expired refresh token"
+}
+```
+
+---
+
+### POST /api/v1/auth/logout
+* **Access:** Public
+* **Success Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Logged out successfully"
+}
+```
+* **Cookie Cleared:** `refreshToken` cookie cleared on response.
 
 ---
 

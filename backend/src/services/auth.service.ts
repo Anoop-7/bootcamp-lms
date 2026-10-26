@@ -107,10 +107,13 @@ export class AuthService {
       role: Role.STUDENT,
     });
 
-    const token = this.generateToken(newUser.id, newUser.role, (newUser as any).tokenVersion ?? 0);
+    const accessToken = this.generateAccessToken(newUser.id, newUser.role, newUser.tokenVersion ?? 0);
+    const refreshToken = this.generateRefreshToken(newUser.id, newUser.tokenVersion ?? 0);
 
     return {
-      token,
+      token: accessToken,
+      accessToken,
+      refreshToken,
       user: {
         id: newUser.id,
         email: newUser.email,
@@ -136,9 +139,50 @@ export class AuthService {
       throw unauthorized("Invalid email or password", "INVALID_CREDENTIALS");
     }
 
-    const token = this.generateToken(user.id, user.role, (user as any).tokenVersion ?? 0);
+    const accessToken = this.generateAccessToken(user.id, user.role, user.tokenVersion ?? 0);
+    const refreshToken = this.generateRefreshToken(user.id, user.tokenVersion ?? 0);
+
     return {
-      token,
+      token: accessToken,
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
+    };
+  }
+
+  async refreshSession(refreshToken: string) {
+    let decoded: { userId: string; tokenVersion?: number };
+    try {
+      decoded = jwt.verify(refreshToken, env.JWT_SECRET) as { userId: string; tokenVersion?: number };
+    } catch {
+      throw unauthorized("Invalid or expired refresh token", "INVALID_REFRESH_TOKEN");
+    }
+
+    if (!decoded.userId) {
+      throw unauthorized("Malformed refresh token", "INVALID_REFRESH_TOKEN");
+    }
+
+    const user = await userRepository.findById(decoded.userId);
+    if (!user) {
+      throw unauthorized("User account no longer exists", "USER_NOT_FOUND");
+    }
+
+    if (decoded.tokenVersion !== undefined && decoded.tokenVersion !== user.tokenVersion) {
+      throw unauthorized("Session expired or revoked. Please log in again.", "SESSION_REVOKED");
+    }
+
+    const newAccessToken = this.generateAccessToken(user.id, user.role, user.tokenVersion ?? 0);
+    const newRefreshToken = this.generateRefreshToken(user.id, user.tokenVersion ?? 0);
+
+    return {
+      token: newAccessToken,
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
       user: {
         id: user.id,
         email: user.email,
@@ -156,7 +200,15 @@ export class AuthService {
     return user;
   }
 
+  public generateAccessToken(userId: string, role: Role, tokenVersion: number = 0): string {
+    return jwt.sign({ userId, role, tokenVersion }, env.JWT_SECRET, { expiresIn: "15m" });
+  }
+
+  public generateRefreshToken(userId: string, tokenVersion: number = 0): string {
+    return jwt.sign({ userId, tokenVersion }, env.JWT_SECRET, { expiresIn: "7d" });
+  }
+
   public generateToken(userId: string, role: Role, tokenVersion: number = 0): string {
-    return jwt.sign({ userId, role, tokenVersion }, env.JWT_SECRET, { expiresIn: "24h" });
+    return this.generateAccessToken(userId, role, tokenVersion);
   }
 }

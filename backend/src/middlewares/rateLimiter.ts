@@ -83,3 +83,15 @@ export const playbackLimiter = rateLimit({
   legacyHeaders: false,
   message: { status: "error", message: "Too many playback requests." },
 });
+
+// 8. Refresh Token Limiter: 30 requests per 15 minutes per IP
+export const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: "error",
+    message: "Too many session refresh requests. Please try again later.",
+  },
+});

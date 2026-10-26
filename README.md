@@ -21,7 +21,8 @@ A full-stack, cohort-based learning management and video streaming platform buil
 
 ### 1. Authentication & Session Integrity
 - **Role-Based Access Control (RBAC):** Distinct workflows and access layers for `STUDENT`, `INSTRUCTOR`, and `ADMIN`.
-- **Token Versioning (`tokenVersion`):** Centralized JWT session revocation. Changing or resetting passwords atomically increments the user's version counter, invalidating stale tokens across existing sessions.
+- **Dual-Token Session Architecture:** Short-lived JWT access tokens (15 minutes) paired with long-lived, rotated refresh tokens (7 days) stored in secure `httpOnly` cookies. The frontend implements a transparent Axios interceptor with a thundering-herd queue, silently refreshing sessions without disrupting active views.
+- **Token Versioning (`tokenVersion`):** Centralized JWT session revocation. Changing or resetting passwords atomically increments the user's version counter, immediately invalidating stale access and refresh tokens across existing sessions.
 - **Cryptographic OTP Flows:** 6-digit verification codes generated with CSPRNG (`crypto.randomInt`) with bcrypt hash storage and strict 10-minute expiration windows (maximum 5 attempts) for registration and account recovery.
 - **Invite-Only Instructor Onboarding:** Admins issue cryptographic, time-limited invitation tokens. Accounts are provisioned without public registration vectors (optional development database seeding is provided via `prisma/seed.ts`).
 

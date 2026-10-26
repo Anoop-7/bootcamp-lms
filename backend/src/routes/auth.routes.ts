@@ -8,6 +8,7 @@ import {
   forgotPasswordLimiter,
   resetPasswordLimiter,
   inviteLimiter,
+  refreshLimiter,
 } from "../middlewares/rateLimiter.js";
 
 const router = Router();
@@ -25,6 +26,16 @@ router.post("/register/verify", registerLimiter, (req, res, next) =>
 // Login with Brute-Force Rate Limiting
 router.post("/login", loginLimiter, (req, res, next) =>
   authController.login(req, res, next)
+);
+
+// Silent Session Refresh
+router.post("/refresh", refreshLimiter, (req, res, next) =>
+  authController.refreshToken(req, res, next)
+);
+
+// Session Logout
+router.post("/logout", (req, res, next) =>
+  authController.logout(req, res, next)
 );
 
 // Identity self-lookup

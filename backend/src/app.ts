@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import prisma from "./config/db.js";
 import { env } from "./config/env.js";
 import authRoutes from "./routes/auth.routes.js";
@@ -40,6 +41,7 @@ app.use(
 );
 
 app.use(express.json());
+app.use(cookieParser());
 
 // Health check verifying database connection (L8: never leak raw DB errors)
 app.get("/health", async (_req, res) => {
