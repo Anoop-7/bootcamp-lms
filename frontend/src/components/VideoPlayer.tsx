@@ -169,6 +169,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               enableWorker: true,
               lowLatencyMode: true,
               xhrSetup: (xhr, requestUrl) => {
+                xhr.withCredentials = true;
                 if (streamUrl.includes("?") && !requestUrl.includes("Key-Pair-Id=")) {
                   const query = streamUrl.split("?")[1];
                   const delimiter = requestUrl.includes("?") ? "&" : "?";

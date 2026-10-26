@@ -20,6 +20,8 @@ interface AppEnv {
   TRUST_PROXY: number;
   SMTP_USER?: string;
   SMTP_PASS?: string;
+  RAZORPAY_KEY_ID?: string;
+  RAZORPAY_KEY_SECRET?: string;
 }
 
 function validateEnv(): AppEnv {
@@ -62,6 +64,18 @@ function validateEnv(): AppEnv {
     process.exit(1);
   }
 
+  let razorpayKeyId = process.env.RAZORPAY_KEY_ID?.trim();
+  let razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+
+  if (PAYMENTS_MODE === "razorpay") {
+    if (!razorpayKeyId) {
+      missing.push("RAZORPAY_KEY_ID (required when PAYMENTS_MODE='razorpay')");
+    }
+    if (!razorpayKeySecret) {
+      missing.push("RAZORPAY_KEY_SECRET (required when PAYMENTS_MODE='razorpay')");
+    }
+  }
+
   if (missing.length > 0) {
     console.error(`❌ [STARTUP FATAL] Missing required environment variables:\n   - ${missing.join("\n   - ")}`);
     process.exit(1);
@@ -88,6 +102,8 @@ function validateEnv(): AppEnv {
     TRUST_PROXY: Number(process.env.TRUST_PROXY ?? 0),
     SMTP_USER: process.env.SMTP_USER,
     SMTP_PASS: process.env.SMTP_PASS,
+    RAZORPAY_KEY_ID: razorpayKeyId,
+    RAZORPAY_KEY_SECRET: razorpayKeySecret,
   };
 }
 

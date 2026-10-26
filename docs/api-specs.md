@@ -30,13 +30,27 @@ All API responses follow a uniform, JSend-compliant envelope structure:
 
 ## 2. Authentication, Account Management & Password Recovery
 
-### POST /api/v1/auth/register
+### POST /api/v1/auth/register/initiate
+* **Access:** Public
+* **Payload Fields:**
+  * `email` (string, required): Candidate email to receive 6-digit verification code.
+* **Success Response (200 OK):**
+```json
+{
+  "status": "success",
+  "message": "Verification code dispatched to your email address"
+}
+```
+
+---
+
+### POST /api/v1/auth/register/verify
 * **Access:** Public
 * **Payload Fields:**
   * `name` (string, required): Full display name.
   * `email` (string, required): Unique email address.
-  * `password` (string, required): Plaintext password to be salted and hashed with bcrypt.
-  * `role` (string, optional): One of `STUDENT`, `INSTRUCTOR`, `ADMIN`. Defaults to `STUDENT`.
+  * `otp` (string, required): 6-digit verification code (valid for 10 minutes, max 5 attempts).
+  * `password` (string, required): Plaintext password (minimum 8 characters).
 * **Success Response (201 Created):**
 ```json
 {
@@ -50,13 +64,6 @@ All API responses follow a uniform, JSend-compliant envelope structure:
       "role": "STUDENT"
     }
   }
-}
-```
-* **Error Response (409 Conflict):**
-```json
-{
-  "status": "error",
-  "message": "Email is already registered"
 }
 ```
 
@@ -622,5 +629,49 @@ All API responses follow a uniform, JSend-compliant envelope structure:
       }
     }
   ]
+}
+```
+
+---
+
+## 9. Payments & Checkout
+
+### POST /api/v1/payments/orders
+* **Access:** Authenticated (`STUDENT`)
+* **Headers:** `Authorization: Bearer <token>`
+* **Payload Fields:**
+  * `cohortId` (string, required): Target cohort ID.
+* **Success Response (201 Created):**
+```json
+{
+  "status": "success",
+  "data": {
+    "orderId": "order_H5Gz78abc123",
+    "amount": 799900,
+    "currency": "INR",
+    "cohortTitle": "Full Stack Web Development Bootcamp",
+    "keyId": "rzp_test_xxxxxxxxxxxxxx"
+  }
+}
+```
+
+---
+
+### POST /api/v1/payments/verify
+* **Access:** Authenticated (`STUDENT`)
+* **Headers:** `Authorization: Bearer <token>`
+* **Payload Fields:**
+  * `cohortId` (string, required): Target cohort ID.
+  * `razorpayOrderId` (string, required): Razorpay order identifier.
+  * `razorpayPaymentId` (string, required): Razorpay transaction payment ID.
+  * `razorpaySignature` (string, required): HMAC SHA-256 cryptographic callback signature.
+* **Success Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "success": true,
+    "message": "Payment verified and enrollment confirmed!"
+  }
 }
 ```

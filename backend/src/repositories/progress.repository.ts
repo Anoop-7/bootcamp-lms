@@ -23,13 +23,16 @@ export class ProgressRepository {
 
     // Determine completion: once completed, remains completed
     const wasAlreadyCompleted = existing?.isCompleted ?? false;
-    const meetsDurationThreshold =
-      params.durationSec && params.durationSec > 0
-        ? newMaxWatchedSeconds >= Math.floor(params.durationSec * 0.9)
-        : false;
+    const isVideo = params.durationSec !== undefined && params.durationSec > 0;
+    const meetsDurationThreshold = isVideo
+      ? newMaxWatchedSeconds >= Math.floor(params.durationSec! * 0.9)
+      : false;
 
+    // For video content, completion is strictly server-evaluated based on the 90% threshold.
+    // Client assertion is only respected for non-video materials (e.g. slides, reading documents).
+    const allowedClientCompleted = !isVideo && Boolean(params.isCompleted);
     const willBeCompleted =
-      wasAlreadyCompleted || Boolean(params.isCompleted) || meetsDurationThreshold;
+      wasAlreadyCompleted || meetsDurationThreshold || allowedClientCompleted;
 
     const completedAt = wasAlreadyCompleted
       ? existing?.completedAt ?? new Date()

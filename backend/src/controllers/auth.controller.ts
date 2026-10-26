@@ -112,7 +112,7 @@ export class AuthController {
 
       const user = await inviteService.acceptInvite(token, name, password);
       // Issue token with the created user's actual tokenVersion
-      const authToken = authService.generateToken(user.id, user.role, (user as any).tokenVersion ?? 0);
+      const authToken = authService.generateToken(user.id, user.role, user.tokenVersion ?? 0);
 
       res.status(200).json({
         status: "success",

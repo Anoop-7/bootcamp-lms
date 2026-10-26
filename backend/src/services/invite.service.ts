@@ -176,8 +176,8 @@ export class InviteService {
         throw unauthorized("Incorrect password for existing account.", "INVALID_CREDENTIALS");
       }
     } else {
-      if (!password || password.length < 6) {
-        throw badRequest("Password must be at least 6 characters.", "PASSWORD_TOO_SHORT");
+      if (!password || password.length < 8) {
+        throw badRequest("Password must be at least 8 characters.", "PASSWORD_TOO_SHORT");
       }
     }
 
@@ -210,7 +210,7 @@ export class InviteService {
         finalUser = await tx.user.update({
           where: { id: existingUser.id },
           data: { role: targetRole },
-          select: { id: true, name: true, email: true, role: true, createdAt: true },
+          select: { id: true, name: true, email: true, role: true, tokenVersion: true, createdAt: true },
         });
       } else {
         const salt = await bcrypt.genSalt(10);
@@ -223,7 +223,7 @@ export class InviteService {
             password: passwordHash,
             role: targetRole,
           },
-          select: { id: true, name: true, email: true, role: true, createdAt: true },
+          select: { id: true, name: true, email: true, role: true, tokenVersion: true, createdAt: true },
         });
       }
 

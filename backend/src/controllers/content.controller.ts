@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from "express";
-import { ContentService } from "../services/content.service.js";
+import { ContentService, ALLOWED_VIDEO_TYPES } from "../services/content.service.js";
 import { generateUploadPresignedUrl } from "../config/s3.js";
 import { generateCloudFrontCookies } from "../config/cloudfrontSigner.js";
 import prisma from "../config/db.js";
+import { env } from "../config/env.js";
 
 const contentService = new ContentService();
 
@@ -149,8 +150,19 @@ export class ContentController {
       const userRole = req.user!.role;
 
       const data = await contentService.getSecureContentUrl(id, userId, userRole);
+      let signedCookies: ReturnType<typeof generateCloudFrontCookies> | undefined;
 
-      if (data.url.includes("cloudfront.net")) {
+      let isCdnStream = data.url.includes("cloudfront.net") || data.url.endsWith(".m3u8");
+      if (!isCdnStream && env.CLOUDFRONT_DOMAIN) {
+        try {
+          const cdnHost = new URL(env.CLOUDFRONT_DOMAIN.startsWith("http") ? env.CLOUDFRONT_DOMAIN : `https://${env.CLOUDFRONT_DOMAIN}`).hostname;
+          isCdnStream = data.url.includes(cdnHost);
+        } catch {
+          // ignore hostname parsing errors
+        }
+      }
+
+      if (isCdnStream) {
         try {
           // Scope cookie resource to the specific lecture HLS directory instead of wildcard /*
           const urlObj = new URL(data.url);
@@ -160,7 +172,8 @@ export class ContentController {
           const scopedResource = `${urlObj.origin}${directoryPath}/*`;
 
           // Generate cookies scoped strictly to this lesson path with a 2-hour lifetime
-          const cookies = generateCloudFrontCookies(scopedResource);
+          const cookies = generateCloudFrontCookies(scopedResource, 2 * 60 * 60);
+          signedCookies = cookies;
           const cookieOptions = {
             httpOnly: true,
             secure: true,
@@ -171,14 +184,18 @@ export class ContentController {
           res.cookie("CloudFront-Policy", cookies["CloudFront-Policy"], cookieOptions);
           res.cookie("CloudFront-Signature", cookies["CloudFront-Signature"], cookieOptions);
           res.cookie("CloudFront-Key-Pair-Id", cookies["CloudFront-Key-Pair-Id"], cookieOptions);
-
-          // IMPORTANT: Do NOT leak signed cookies/secrets in the JSON response body
         } catch (cookieErr) {
           console.warn("⚠️ [CloudFront Signer] Could not issue signed cookies:", cookieErr);
         }
       }
 
-      res.status(200).json({ status: "success", data });
+      res.status(200).json({
+        status: "success",
+        data: {
+          ...data,
+          cookies: signedCookies,
+        },
+      });
     } catch (err: any) {
       if (err.message === "CONTENT_NOT_FOUND") {
         res.status(404).json({ status: "error", message: "Content not found" });
@@ -220,6 +237,15 @@ export class ContentController {
         res.status(400).json({
           status: "error",
           message: "filename and contentType are required",
+        });
+        return;
+      }
+
+      if (!ALLOWED_VIDEO_TYPES.includes(contentType.toLowerCase())) {
+        res.status(400).json({
+          status: "error",
+          code: "UNSUPPORTED_VIDEO_FORMAT",
+          message: `Unsupported format. Allowed MIME types: ${ALLOWED_VIDEO_TYPES.join(", ")}`,
         });
         return;
       }

@@ -2,22 +2,24 @@ import Razorpay from "razorpay";
 import crypto from "crypto";
 import prisma from "../config/db.js";
 import { env } from "../config/env.js";
-import { badRequest, notFound, conflict } from "../utils/httpError.js";
+import { badRequest, notFound, conflict, internal } from "../utils/httpError.js";
 import { PaymentStatus } from "@prisma/client";
 
 export class PaymentService {
-  private razorpay: Razorpay | null = null;
+  private razorpay: Razorpay;
 
   constructor() {
-    const key_id = process.env.RAZORPAY_KEY_ID;
-    const key_secret = process.env.RAZORPAY_KEY_SECRET;
+    const key_id = env.RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID;
+    const key_secret = env.RAZORPAY_KEY_SECRET || process.env.RAZORPAY_KEY_SECRET;
 
-    if (key_id && key_secret) {
-      this.razorpay = new Razorpay({
-        key_id,
-        key_secret,
-      });
+    if (!key_id || !key_secret) {
+      throw internal("Razorpay payment gateway credentials are not configured", "PAYMENT_CONFIG_ERROR");
     }
+
+    this.razorpay = new Razorpay({
+      key_id,
+      key_secret,
+    });
   }
 
   async createOrder(userId: string, cohortId: string) {
@@ -46,23 +48,15 @@ export class PaymentService {
     // Amount for Razorpay is strictly in the smallest currency sub-unit (paise)
     const amountInPaise = Math.round(cohort.price * 100);
 
-    let razorpayOrderId: string;
-
-    if (this.razorpay) {
-      const order = await this.razorpay.orders.create({
-        amount: amountInPaise,
-        currency: "INR",
-        receipt: `rcpt_${userId.substring(0, 8)}_${Date.now()}`,
-        notes: {
-          cohortId,
-          userId,
-        },
-      });
-      razorpayOrderId = order.id;
-    } else {
-      // Fallback stub for local testing if credentials are not yet entered
-      razorpayOrderId = `order_test_${crypto.randomBytes(8).toString("hex")}`;
-    }
+    const order = await this.razorpay.orders.create({
+      amount: amountInPaise,
+      currency: "INR",
+      receipt: `rcpt_${userId.substring(0, 8)}_${Date.now()}`,
+      notes: {
+        cohortId,
+        userId,
+      },
+    });
 
     // Persist pending order record
     const dbOrder = await prisma.order.create({
@@ -71,7 +65,7 @@ export class PaymentService {
         cohortId,
         amount: cohort.price,
         currency: "INR",
-        razorpayOrderId,
+        razorpayOrderId: order.id,
         status: PaymentStatus.PENDING,
       },
     });
@@ -81,7 +75,7 @@ export class PaymentService {
       amount: amountInPaise,
       currency: "INR",
       cohortTitle: cohort.title,
-      keyId: process.env.RAZORPAY_KEY_ID || "rzp_test_placeholder",
+      keyId: env.RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID!,
     };
   }
 
@@ -108,22 +102,31 @@ export class PaymentService {
       return { success: true, message: "Order already verified and enrolled." };
     }
 
-    // Cryptographic signature validation using HMAC SHA256
-    const secret = process.env.RAZORPAY_KEY_SECRET;
-    if (secret) {
-      const body = `${razorpayOrderId}|${razorpayPaymentId}`;
-      const expectedSignature = crypto
-        .createHmac("sha256", secret)
-        .update(body)
-        .digest("hex");
+    const secret = env.RAZORPAY_KEY_SECRET || process.env.RAZORPAY_KEY_SECRET;
+    if (!secret) {
+      throw internal("Razorpay secret key is not configured", "PAYMENT_CONFIG_ERROR");
+    }
 
-      if (expectedSignature !== razorpaySignature) {
-        await prisma.order.update({
-          where: { id: order.id },
-          data: { status: PaymentStatus.FAILED },
-        });
-        throw badRequest("Payment signature verification failed", "INVALID_SIGNATURE");
-      }
+    // Cryptographic signature validation using HMAC SHA256 and constant-time comparison
+    const body = `${razorpayOrderId}|${razorpayPaymentId}`;
+    const expectedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(body)
+      .digest("hex");
+
+    const expectedBuf = Buffer.from(expectedSignature, "utf8");
+    const receivedBuf = Buffer.from(razorpaySignature || "", "utf8");
+
+    const isMatch =
+      expectedBuf.length === receivedBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, receivedBuf);
+
+    if (!isMatch) {
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { status: PaymentStatus.FAILED },
+      });
+      throw badRequest("Payment signature verification failed", "INVALID_SIGNATURE");
     }
 
     // Atomic transaction: mark order SUCCESS and create student Enrollment

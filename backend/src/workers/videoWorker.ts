@@ -1,9 +1,10 @@
-import cron from "node-cron";
+import cron, { ScheduledTask } from "node-cron";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { Readable } from "node:stream";
+import { createRequire } from "node:module";
 import {
   GetObjectCommand,
   PutObjectCommand,
@@ -14,6 +15,8 @@ import { VideoStatus } from "@prisma/client";
 import prisma from "../config/db.js";
 import s3Client from "../config/s3.js";
 import { env } from "../config/env.js";
+
+const require = createRequire(import.meta.url);
 
 const BUCKET = env.AWS_S3_BUCKET;
 const MAX_TRANSCODE_ATTEMPTS = 3;
@@ -369,10 +372,11 @@ async function recoverStuckTranscodingJobs() {
 }
 
 let isProcessing = false;
+const scheduledTasks: ScheduledTask[] = [];
 
 export function initVideoBackgroundWorkers() {
   // 1. Hourly cleanup of stalled S3 multipart uploads
-  cron.schedule("0 * * * *", async () => {
+  const cleanupTask = cron.schedule("0 * * * *", async () => {
     try {
       await abortStaleMultipartUploads();
     } catch (err) {
@@ -381,7 +385,7 @@ export function initVideoBackgroundWorkers() {
   });
 
   // 2. Watchdog every 10 minutes for stuck jobs
-  cron.schedule("*/10 * * * *", async () => {
+  const watchdogTask = cron.schedule("*/10 * * * *", async () => {
     try {
       await recoverStuckTranscodingJobs();
     } catch (err) {
@@ -390,7 +394,7 @@ export function initVideoBackgroundWorkers() {
   });
 
   // 3. Queue processor every 15 seconds
-  cron.schedule("*/15 * * * * *", async () => {
+  const queueTask = cron.schedule("*/15 * * * * *", async () => {
     if (isProcessing) return;
 
     try {
@@ -417,5 +421,14 @@ export function initVideoBackgroundWorkers() {
     }
   });
 
+  scheduledTasks.push(cleanupTask, watchdogTask, queueTask);
   console.log("🚀 Video background workers & cron schedules initialized.");
+}
+
+export function stopVideoBackgroundWorkers() {
+  for (const task of scheduledTasks) {
+    task.stop();
+  }
+  scheduledTasks.length = 0;
+  console.log("🛑 Video background workers & cron schedules stopped.");
 }

@@ -18,12 +18,13 @@ function getPrivateKey(): string {
   throw new Error("CloudFront private_key.pem not found in project root.");
 }
 
-export function generateCloudFrontCookies(resourcePattern: string = "/*") {
+export function generateCloudFrontCookies(resourcePattern: string = "/*", ttlSeconds: number = 2 * 60 * 60) {
   const privateKey = getPrivateKey();
-  const url = `${cloudfrontDomain}${resourcePattern}`;
+  const url = resourcePattern.startsWith("http://") || resourcePattern.startsWith("https://")
+    ? resourcePattern
+    : `${cloudfrontDomain}${resourcePattern.startsWith("/") ? "" : "/"}${resourcePattern}`;
 
-  // Cookie valid for 6 hours
-  const dateLessThan = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+  const expiresEpoch = Math.floor(Date.now() / 1000) + ttlSeconds;
 
   const policy = JSON.stringify({
     Statement: [
@@ -31,7 +32,7 @@ export function generateCloudFrontCookies(resourcePattern: string = "/*") {
         Resource: url,
         Condition: {
           DateLessThan: {
-            "AWS:EpochTime": Math.floor(new Date(dateLessThan).getTime() / 1000),
+            "AWS:EpochTime": expiresEpoch,
           },
         },
       },

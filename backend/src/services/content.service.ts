@@ -18,7 +18,7 @@ import {
 
 const contentRepository = new ContentRepository();
 
-const ALLOWED_VIDEO_TYPES = [
+export const ALLOWED_VIDEO_TYPES = [
   "video/mp4",
   "video/quicktime",
   "video/x-matroska",

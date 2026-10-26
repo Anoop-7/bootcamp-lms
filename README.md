@@ -22,12 +22,12 @@ A full-stack, cohort-based learning management and video streaming platform buil
 ### 1. Authentication & Session Integrity
 - **Role-Based Access Control (RBAC):** Distinct workflows and access layers for `STUDENT`, `INSTRUCTOR`, and `ADMIN`.
 - **Token Versioning (`tokenVersion`):** Centralized JWT session revocation. Changing or resetting passwords atomically increments the user's version counter, invalidating stale tokens across existing sessions.
-- **Cryptographic OTP Flows:** 6-digit verification codes generated with CSPRNG (`crypto.randomInt`) with SHA-256 hash storage and strict expiration windows for registration and account recovery.
-- **Invite-Only Instructor Onboarding:** Admins issue cryptographic, time-limited invitation tokens. Accounts are provisioned without public registration vectors or database seeding.
+- **Cryptographic OTP Flows:** 6-digit verification codes generated with CSPRNG (`crypto.randomInt`) with bcrypt hash storage and strict 10-minute expiration windows (maximum 5 attempts) for registration and account recovery.
+- **Invite-Only Instructor Onboarding:** Admins issue cryptographic, time-limited invitation tokens. Accounts are provisioned without public registration vectors (optional development database seeding is provided via `prisma/seed.ts`).
 
 ### 2. Video Pipeline & Secure HLS Streaming
 - **S3 Multipart Upload Pipeline:** Instructors upload lecture videos directly in multi-part chunks via pre-signed S3 URLs, bypassing web-tier bottlenecking.
-- **Path-Scoped CloudFront Signed Cookies:** Media traffic is delivered over AWS CloudFront. Access requests generate `CloudFront-Policy`, `CloudFront-Signature`, and `CloudFront-Key-Pair-Id` HTTP-only cookies restricted to the specific lecture HLS directory (`/hls/<asset-id>/*`) with a 2-hour TTL.
+- **Path-Scoped CloudFront Signed Cookies:** Media traffic is delivered over AWS CloudFront. Access requests generate `CloudFront-Policy`, `CloudFront-Signature`, and `CloudFront-Key-Pair-Id` HTTP-only cookies and signed parameters scoped strictly to the lecture's HLS directory (`videos/<asset-prefix>/*`) with a 2-hour TTL.
 - **Adaptive Bitrate (ABR) Playback:** Custom HLS video player with auto-resolution switching, variable playback speeds, dynamic anti-piracy watermarking, and auto-resume.
 
 ### 3. Server-Side Heartbeat & Progress Evaluation
@@ -35,8 +35,9 @@ A full-stack, cohort-based learning management and video streaming platform buil
 - **Enrollment & Threshold Verification:** Completion markers (`isCompleted`) are strictly calculated on the server when validated watch time crosses 90% of duration, guarded by active session validation and cohort enrollment checks.
 
 ### 4. Commerce & Order Verification
-- **Razorpay Test Mode Integration:** Built-in checkout flow supporting test cards, dummy Netbanking, and mock UPI handles.
-- **Cryptographic Callback Verification:** Orders are generated on the server with amounts stored in paise. Client-side payment callbacks verify signatures using HMAC SHA-256 before committing atomic enrollment and order transitions.
+- **Razorpay Integration:** Built-in checkout flow supporting test cards, dummy Netbanking, and UPI handles.
+- **Cryptographic Callback Verification:** Orders are generated on the server with amounts stored in paise. Client-side payment callbacks verify signatures using timing-safe HMAC SHA-256 before committing atomic enrollment and order transitions.
+- **Known Limitation:** Payments are currently confirmed via synchronous frontend callback verification (`POST /payments/verify`). Webhook-based asynchronous order reconciliation is an upcoming architectural milestone.
 
 ---
 
@@ -85,7 +86,8 @@ The backend follows an explicit Controller-Service-Repository pattern:
 │       └── ci.yml               # Automated TypeScript typecheck, ESLint, and build pipeline
 ├── backend/
 │   ├── prisma/
-│   │   └── schema.prisma        # Database models & relationships
+│   │   ├── schema.prisma        # Database models & relationships
+│   │   └── seed.ts              # Idempotent development seed data
 │   ├── src/
 │   │   ├── config/              # S3, CloudFront signer, database, and env validation
 │   │   ├── controllers/         # HTTP request handlers
@@ -93,6 +95,8 @@ The backend follows an explicit Controller-Service-Repository pattern:
 │   │   ├── repositories/        # Database access layer
 │   │   ├── routes/              # Route definitions
 │   │   ├── services/            # Core business & payment verification logic
+│   │   ├── utils/               # Custom HTTP error helpers
+│   │   ├── workers/             # Background HLS transcoding and cleanup cron jobs
 │   │   ├── app.ts               # Express application configuration
 │   │   └── server.ts            # Entry point & graceful shutdown hooks
 │   └── .env.example
@@ -190,6 +194,14 @@ The backend follows an explicit Controller-Service-Repository pattern:
    npm run dev
    ```
    The client application will run on `http://localhost:5173`.
+
+---
+
+## Documentation
+
+Comprehensive design specifications and API documentation are available in the [`docs/`](docs/) directory:
+- [REST API Specifications](docs/api-specs.md)
+- [Architecture & Technical Design](docs/architecture.md)
 
 ---
 
