@@ -79,6 +79,13 @@ To eliminate open instructor sign-ups while preventing manual database modificat
 3. The user submits the OTP with their new password to `POST /api/v1/auth/reset-password`.
 4. The system validates the OTP, salts and hashes the new password with bcrypt, and purges the reset token.
 
+### 2.5 Dual-Token Session Architecture & Silent Rotation
+To prevent disruptive session timeouts while protecting authentication secrets:
+1. **Short-Lived Access Token (15 Minutes):** Passed in the `Authorization: Bearer <token>` header for stateless API route authentication and RBAC checks.
+2. **Secure Refresh Token (7 Days):** Generated with a unique cryptographic `jti` and stored exclusively inside an `httpOnly`, `sameSite`, `secure` cookie (`refreshToken`), preventing access by client-side scripts.
+3. **Transparent Frontend Refresh Interceptor:** The client Axios interceptor captures `401 Unauthorized` responses. If token renewal is already in progress, concurrent outgoing requests are enqueued in a thundering-herd queue (`failedQueue`). When the rotated token returns from `POST /api/v1/auth/refresh`, the queue resolves and retries all waiting requests transparently without forcing page reloads.
+4. **Instant Revocation via `tokenVersion`:** Both access and refresh tokens embed the user's `tokenVersion`. Changing or resetting a password atomically increments `tokenVersion` in PostgreSQL, immediately invalidating all outstanding tokens across all user devices.
+
 ---
 
 ## 3. Media Delivery & AWS S3 Pre-signed Security
@@ -139,3 +146,30 @@ Serverless databases (such as Neon PostgreSQL) auto-scale compute layers. Unpool
 * **Modern Stack:** React 19, TypeScript, Vite, Tailwind CSS v4, and `@tanstack/react-query`.
 * **State & Query Cache:** Server state is cached and automatically synchronized via TanStack Query invalidation (e.g., updating video progress or toggling live session status).
 * **Custom Video Player (`VideoPlayer.tsx`):** Features automated playback position persistence (`localStorage`), speed modulation, keyboard shortcuts, and progress synchronization via `POST /api/v1/contents/:id/progress`.
+
+---
+
+## 7. Quality Gate & Automated Testing Architecture
+
+The backend implements automated testing with **Vitest** (native ESM/TypeScript test runner) and **Supertest** (HTTP endpoint assertion):
+
+```text
+tests/
+├── unit/
+│   ├── auth.service.test.ts      # Token expiration, rotation, revocation & bcrypt checks
+│   └── payment.service.test.ts   # Paise conversion, duplicate checks & HMAC SHA-256 verification
+├── integration/
+│   └── auth.routes.test.ts       # Supertest HTTP flows: cookie parsing, refresh rotation, logout
+└── tsconfig.json                 # Dedicated test TypeScript configuration
+```
+
+### 7.1 Unit Testing Strategy
+* **Auth Service (`auth.service.test.ts`):** Validates 15m access token and 7d refresh token lifespans, payload decodes (`userId`, `role`, `tokenVersion`, `jti`), token rotation mechanics, signature tampering rejection, and `tokenVersion` session revocation.
+* **Payment Service (`payment.service.test.ts`):** Validates order calculation (rupees to paise), rejects duplicate orders for already enrolled students, rejects free cohort checkout, verifies genuine Razorpay HMAC SHA-256 signatures via `crypto.timingSafeEqual`, and rejects forged signatures.
+
+### 7.2 Integration Testing Strategy
+* **Auth Routes (`auth.routes.test.ts`):** Tests Express transport and cookie parsing via Supertest:
+  * Rejects missing refresh cookies with `401 Unauthorized`.
+  * Clears invalid cookies with expired `Set-Cookie` directives.
+  * Validates token rotation and verifies fresh `refreshToken` is set in the response `Set-Cookie` header.
+  * Verifies `POST /auth/logout` clears the authentication cookie.

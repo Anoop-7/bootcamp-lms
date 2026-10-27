@@ -8,7 +8,7 @@ on:
 
 jobs:
   backend-lint-and-typecheck:
-    name: Backend Typecheck
+    name: Backend Typecheck & Tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -34,6 +34,22 @@ jobs:
 
       - name: Run TypeScript Check
         run: npx tsc --noEmit
+
+      - name: Run Test TypeScript Check
+        run: npx tsc --noEmit --project tests/tsconfig.json
+
+      - name: Run Automated Test Suite
+        env:
+          NODE_ENV: test
+          JWT_SECRET: "test-environment-jwt-secret-minimum-32-chars-long"
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/bootcamp?schema=public"
+          AWS_REGION: "ap-south-1"
+          AWS_S3_BUCKET: "test-bucket"
+          CLOUDFRONT_DOMAIN: "https://test.cloudfront.net"
+          PAYMENTS_MODE: "razorpay"
+          RAZORPAY_KEY_ID: "rzp_test_dummy_id"
+          RAZORPAY_KEY_SECRET: "rzp_test_dummy_secret"
+        run: npm test
 
   frontend-lint-and-build:
     name: Frontend Lint & Build

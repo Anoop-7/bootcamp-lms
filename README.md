@@ -208,18 +208,25 @@ Comprehensive design specifications and API documentation are available in the [
 
 ## Quality & Verification
 
-The codebase runs strict typechecks and ESLint rules:
+The codebase runs automated tests, strict typechecks, and ESLint rules:
 
 ```bash
 # In backend/
-npx tsc --noEmit
+npm test           # Run Vitest test suite (Unit & Integration tests)
+npm run test:watch # Run Vitest in interactive watch mode
+npx tsc --noEmit   # Production TypeScript typecheck
 
 # In frontend/
-npm run lint
-npm run build
+npm run lint       # ESLint validation
+npm run build      # TypeScript validation & production bundle
 ```
 
-Every push and pull request to `main` triggers `.github/workflows/ci.yml` to ensure no linting warnings, typing violations, or broken builds enter the mainline.
+### Automated Test Coverage
+- **Auth Unit Tests (`tests/unit/auth.service.test.ts`):** 15-minute access token lifespan, 7-day refresh token generation with unique `jti`, session refresh rotation, signature tamper rejection, and `tokenVersion` session revocation.
+- **Payment Unit Tests (`tests/unit/payment.service.test.ts`):** Razorpay order calculation (rupees-to-paise), duplicate enrollment prevention, constant-time HMAC SHA-256 callback signature verification (`crypto.timingSafeEqual`), and forged signature rejection.
+- **Auth Route Integration Tests (`tests/integration/auth.routes.test.ts`):** Supertest HTTP assertions for `/auth/refresh` (cookie validation, rotation, and rejection) and `/auth/logout` (cookie clearing).
+
+Every push and pull request to `main` triggers `.github/workflows/ci.yml` to ensure no linting warnings, typing violations, broken tests, or failed builds enter the mainline.
 
 ---
 
